@@ -1,0 +1,90 @@
+# CareerPilot record schema. SQLite is the source of truth; tracker.xlsx is an exported, re-importable view.
+collections:
+  - name: applications
+    title: Applications
+    id_prefix: JOB
+    key_fields: [employer, role, job_url]       # stable Job ID = hash of these
+    status_field: status
+    initial_status: Discovered
+    transitions:                                 # auditable status machine (every change lands in record_events)
+      Discovered: [Shortlisted, Not suitable, Withdrawn]
+      Shortlisted: [Preparing, Not suitable, Withdrawn]
+      Preparing: [Ready for review, Withdrawn]
+      Ready for review: [Submitted, Preparing, Withdrawn]   # Submitted only after an approved browser.submit
+      Submitted: [Acknowledged, Interview, Rejected, Withdrawn]
+      Acknowledged: [Interview, Rejected, Withdrawn]
+      Interview: [Interview, Offer, Rejected, Withdrawn]
+      Offer: [Accepted, Declined]
+      Not suitable: [Shortlisted]
+    fields:
+      - {name: employer, type: string, required: true, width: 22}
+      - {name: role, type: string, required: true, width: 34}
+      - {name: location, type: string, width: 20}
+      - {name: job_url, type: url, required: true, width: 40}
+      - {name: source, type: string, width: 14}
+      - {name: date_discovered, type: date, width: 13}
+      - {name: closing_date, type: date, width: 13}
+      - {name: suitability_score, type: integer, min: 0, max: 100, width: 10}
+      - {name: suitability_level, type: enum, enum: [poor fit, partial fit, good fit, strong fit], width: 12}
+      - {name: eligibility, type: enum, enum: [Eligible, Check, Ineligible], width: 11}
+      - {name: experience_flag, type: string, width: 22}
+      - {name: cv_version, type: string, width: 12}
+      - {name: cover_letter, type: string, width: 30}
+      - {name: status, type: enum, enum: [Discovered, Shortlisted, Not suitable, Preparing, Ready for review, Submitted, Acknowledged, Interview, Offer, Accepted, Declined, Rejected, Withdrawn], width: 15}
+      - {name: submission_date, type: date, width: 13}
+      - {name: recruiter_name, type: string, width: 18}
+      - {name: recruiter_email, type: email, width: 24}
+      - {name: follow_up_date, type: date, width: 13}
+      - {name: notes, type: text, width: 40}
+
+  - name: contacts
+    title: Contacts
+    id_prefix: CON
+    key_fields: [name, organisation]
+    fields:
+      - {name: name, type: string, required: true}
+      - {name: organisation, type: string, required: true}
+      - {name: role, type: string}
+      - {name: email, type: email}
+      - {name: profile_url, type: url, width: 36}
+      - {name: source, type: string, description: "how the contact was found (must be a permitted source or user-entered)"}
+      - {name: relationship, type: enum, enum: [Recruiter, Hiring manager, Alumni, Referral, Other]}
+      - {name: last_contacted, type: date}
+      - {name: notes, type: text, width: 40}
+
+  - name: recruitment_emails
+    title: Recruitment Emails
+    id_prefix: EML
+    key_fields: [message_id]
+    fields:
+      - {name: message_id, type: string, required: true}
+      - {name: received, type: datetime, width: 18}
+      - {name: sender, type: string, width: 26}
+      - {name: subject, type: string, width: 40}
+      - {name: job_id, type: string}
+      - {name: classification, type: enum, enum: [Acknowledgement, Interview invite, Rejection, Offer, Assessment, Other]}
+      - {name: draft_reply_path, type: string, width: 30}
+      - {name: reply_status, type: enum, enum: [None, Drafted, Approved, Sent]}
+
+  - name: interviews
+    title: Interviews
+    id_prefix: INT
+    key_fields: [job_id, stage, scheduled_for]
+    fields:
+      - {name: job_id, type: string, required: true}
+      - {name: stage, type: enum, enum: [Phone screen, Technical, Behavioural, Assessment centre, Final, Other], required: true}
+      - {name: scheduled_for, type: datetime, required: true, width: 18}
+      - {name: interviewer, type: string}
+      - {name: outcome, type: enum, enum: [Pending, Passed, Failed, Cancelled]}
+      - {name: prep_notes, type: text, width: 40}
+
+  - name: skills
+    title: Skills and Gaps
+    id_prefix: SKL
+    key_fields: [skill]
+    fields:
+      - {name: skill, type: string, required: true}
+      - {name: have, type: boolean}
+      - {name: evidence, type: string, width: 36, description: "verifiable evidence (project, course, role)"}
+      - {name: demand_count, type: integer, min: 0}
+      - {name: priority, type: enum, enum: [High, Medium, Low]}

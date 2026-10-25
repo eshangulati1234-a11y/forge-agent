@@ -1,0 +1,7 @@
+name: careerpilot
+version: 0.1.0
+description: Career assistant workflows on Forge (job discovery, scoring, tracker, drafts). Never submits or messages without approval.
+collections: collections.yaml
+tools: tools.py
+workflows:
+  - job_watch.yaml

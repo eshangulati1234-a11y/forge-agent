@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import sys
 from pathlib import Path
 
 import yaml
@@ -40,8 +41,10 @@ def load_plugins(services, root: Path | None = None) -> list[str]:
             if meta.get("collections"):
                 services.records.load_yaml((d / meta["collections"]).read_text(encoding="utf-8"))
             if meta.get("tools"):
-                spec = importlib.util.spec_from_file_location(f"forge_plugin_{name}", d / meta["tools"])
+                mod_name = f"forge_plugin_{name}"
+                spec = importlib.util.spec_from_file_location(mod_name, d / meta["tools"])
                 mod = importlib.util.module_from_spec(spec)
+                sys.modules[mod_name] = mod   # pydantic resolves postponed annotations through sys.modules
                 spec.loader.exec_module(mod)  # registers tools via @tool(..., source="plugin:<name>")
             names.append(name)
             log.info("loaded plugin %s from %s", name, d)

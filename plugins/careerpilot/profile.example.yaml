@@ -1,0 +1,12 @@
+# CareerPilot candidate profile. Copied to ~/.forge/careerpilot/profile.yaml on first run - edit that copy.
+# Only entries with `verified: true` are ever used as facts in CVs, cover letters or messages.
+# Forge will not invent experience: anything not listed here and verified cannot appear in generated documents.
+name: "Your Name"
+location: "Melbourne, VIC"
+work_rights: "Australian citizen"        # used for eligibility; leave empty if unsure
+target_roles: ["Graduate Software Engineer", "Junior Developer", "Graduate Data Engineer"]
+facts:
+  - {text: "Bachelor of Computer Science, Monash University (2025)", verified: false}
+  - {text: "Python, SQL, TypeScript, React", verified: false}
+  - {text: "Built a full-stack project: <describe>", verified: false}
+skills: [Python, SQL, TypeScript, React, Git]

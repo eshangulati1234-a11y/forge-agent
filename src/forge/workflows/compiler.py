@@ -30,7 +30,8 @@ Return ONE JSON object describing a workflow. Schema (informal):
                  "desktop":bool, "browser":bool},
  "steps": [ STEP, ... ],
  "outputs": {"name": "{{ expression }}"},
- "tests": [{"name": str, "inputs": {}, "mocks": {"tool.name": <canned output>, "llm": <canned llm output>}, "expect": ["jinja expression"]}],
+ "tests": [{"name": str, "inputs": {}, "mocks": {"tool.name": <canned output>, "llm": <canned llm output>, "decide": <canned decision>},
+            "expect": ["jinja expression"]}],
  "missing_tools": [{"name": "...", "description": "what capability is missing"}]   // only if no tool can do a required step
 }
 STEP kinds (every step has a unique lower_snake "id"; optional "when": "<jinja expr>", "retry": {"max_attempts":3}):
@@ -141,18 +142,48 @@ class Compiler:
             return res
         if res.missing_tools:
             return res   # tool generation pipeline handles this (see docs/ROADMAP.md)
-        try:
-            v = self.s.workflows.create_version(ir, created_by="compiler", note=request[:500])
-        except CompileError as e:
-            res.issues = [i.model_dump() for i in e.issues]
-            return res
-        res.workflow_id, res.version_id, res.version, res.yaml = ir.id, v["id"], v["version"], ir.to_yaml()
-        res.tests = await self.s.workflows.run_tests(v["id"])
-        res.dry_run = await self.s.workflows.dry_run(v["id"])
-        tests_ok = all(t["passed"] for t in res.tests)
+        for test_round in range(2):
+            try:
+                v = self.s.workflows.create_version(ir, created_by="compiler", note=request[:500])
+            except CompileError as e:
+                res.issues = [i.model_dump() for i in e.issues]
+                return res
+            res.workflow_id, res.version_id, res.version, res.yaml = ir.id, v["id"], v["version"], ir.to_yaml()
+            res.tests = await self.s.workflows.run_tests(v["id"])
+            failed = [t for t in res.tests if not t["passed"]]
+            if not failed or test_round == 1:
+                break
+            # One repair round. The model may fix the workflow or a wrong expectation, but may not delete the safety net:
+            # at least one test must remain and assert success.
+            messages += [{"role": "assistant", "content": ir.model_dump_json(by_alias=True)},
+                         {"role": "user", "content": "Tests failed:\n" + json.dumps(failed, default=str)[:3000] +
+                          "\nFix the workflow or the incorrect expectations (expectations are plain Jinja expressions evaluated against "
+                          "`status`, `outputs` and `steps`; do not put {{ }} inside them). Keep at least one test asserting "
+                          "status == 'succeeded'. Return the complete corrected JSON."}]
+            out = await self.s.router.generate("compile", messages, schema="json", temperature=0.1, max_tokens=4000)  # type: ignore[arg-type]
+            try:
+                data = out.json()
+                data.pop("missing_tools", None)
+                fixed = WorkflowIR.model_validate(data)
+            except (json.JSONDecodeError, ValidationError):
+                break
+            if not fixed.tests or not any("status == 'succeeded'" in e or 'status == "succeeded"' in e for t in fixed.tests for e in t.expect):
+                break
+            if check_ir(fixed, self.s.registry):
+                break
+            ir = fixed
+            res.attempts += 1
+        res.dry_run = await self.s.workflows.dry_run(res.version_id)
+        # Required gate (Forge-defined): every test scenario runs to success with its mocks, and the dry-run passes.
+        # Model-written expectations are advisory: an 8B model often writes wrong ones (hard-coded dates, wrong mock
+        # shapes), so failures are surfaced to the approver instead of silently blocking or silently passing.
+        scenarios_ok = bool(res.tests) and all(t["status"] == "succeeded" for t in res.tests)
+        advisory = [e for t in res.tests for e in t["failed_expectations"]]
         dry_ok = res.dry_run["status"] in ("succeeded", "waiting_user")
-        res.ok = tests_ok and dry_ok
+        res.ok = scenarios_ok and dry_ok
         if res.ok and deploy:
-            ap = self.s.workflows.request_deploy(v["id"], requested_by, {"tests": res.tests, "dry_run_status": res.dry_run["status"]})
+            ap = self.s.workflows.request_deploy(res.version_id, requested_by, {
+                "tests": res.tests, "dry_run_status": res.dry_run["status"],
+                "advisory_expectation_failures": advisory, "note": "review advisory failures before approving" if advisory else ""})
             res.approval_id = ap["id"]
         return res

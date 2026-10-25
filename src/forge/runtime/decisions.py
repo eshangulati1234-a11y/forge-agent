@@ -16,6 +16,8 @@ class Decisions:
         self.s = services
 
     async def decide(self, step, ctx: dict, mocks: dict | None = None) -> dict:
+        if mocks and "decide" in mocks:          # workflow tests run offline: no Laya, no LLM
+            return dict(mocks["decide"])
         state = str(render(step.state, ctx))
         question = str(render(step.question, ctx))
         laya_on = self.s.cfg.laya.enabled and self.s.laya is not None and not (mocks and "laya" in mocks)

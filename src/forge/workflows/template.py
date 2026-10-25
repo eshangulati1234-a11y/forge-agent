@@ -37,14 +37,22 @@ def evaluate(expr: str, ctx: dict) -> Any:
     return ENV.compile_expression(expr, undefined_to_none=False)(**ctx)
 
 
+def expand_vars(s: str) -> str:
+    if "${FORGE_HOME}" in s:
+        from forge.config import forge_home
+        s = s.replace("${FORGE_HOME}", str(forge_home()).replace("\\", "/"))
+    return s
+
+
 def render(value: Any, ctx: dict) -> Any:
     if isinstance(value, str):
         m = WHOLE.match(value)
         if m and "{{" not in m.group(1) and "}}" not in m.group(1):
-            return evaluate(m.group(1).strip(), ctx)
+            out = evaluate(m.group(1).strip(), ctx)
+            return expand_vars(out) if isinstance(out, str) else out
         if "{{" in value or "{%" in value:
-            return ENV.from_string(value).render(**ctx)
-        return value
+            return expand_vars(ENV.from_string(value).render(**ctx))
+        return expand_vars(value)
     if isinstance(value, dict):
         return {k: render(v, ctx) for k, v in value.items()}
     if isinstance(value, list):
