@@ -40,11 +40,26 @@ def _slug(text: str, n: int = 28) -> str:
     return s[:n] or "option"
 
 
+NUM_WORDS = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five", "6": "six", "7": "seven",
+             "8": "eight", "9": "nine", "+": "plus", "-": "minus", "*": "multiply", "/": "divide", "=": "equals"}
+STOP = {"the", "a", "an", "to", "of", "in", "on", "and", "key", "press", "click", "button", "please", "then", "into", "for"}
+
+
+def _tokens(text: str) -> set[str]:
+    text = re.sub(r"([a-z])([A-Z0-9])", r"\1 \2", text)          # num9Button -> num 9 Button
+    toks = set()
+    for t in re.findall(r"[a-z]+|\d|[+\-*/=]", text.lower()):
+        toks.add(NUM_WORDS.get(t, t))
+    return {t[:-1] if len(t) > 4 and t.endswith("s") else t for t in toks - STOP}
+
+
 def lexical_prerank(goal: str, options: dict[str, str], k: int) -> dict[str, str]:
-    words = {w for w in re.findall(r"[a-z0-9]+", goal.lower()) if len(w) > 2}
+    """Shrink a large candidate set to Laya's option budget without dropping the obvious match.
+    Matches on normalised tokens (digits <-> number words, camelCase ids split, light stemming)."""
+    want = _tokens(goal)
     def s(item):
-        hay = item[1].lower()
-        return sum(w in hay for w in words)
+        have = _tokens(item[0] + " " + item[1])
+        return len(want & have)
     return dict(sorted(options.items(), key=s, reverse=True)[:k])
 
 

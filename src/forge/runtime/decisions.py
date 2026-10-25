@@ -29,10 +29,13 @@ class Decisions:
         return await self.score(state, question, step.levels or [], escalate=step.escalate, use_laya=laya_on)
 
     async def choose(self, state: str, question: str, options: dict[str, str], *, threshold=None, escalate=True,
-                     use_laya=True, goal: str = "") -> dict:
+                     use_laya=True, goal: str = "", laya_state: str | None = None, laya_options: dict[str, str] | None = None) -> dict:
+        """laya_state / laya_options: Laya-specific framing. Measured on Calculator: putting the full control list in
+        Laya's state dropped accuracy from 7/8 to 0/8, so System 1 gets a minimal state and short option texts
+        while System 2 gets the full observation."""
         out: dict[str, Any] = {"options": len(options)}
         if use_laya:
-            d = await self.s.laya.choose(state, question, options, goal=goal, threshold=threshold)
+            d = await self.s.laya.choose(laya_state or state, question, laya_options or options, goal=goal, threshold=threshold)
             out.update(choice=d.label, confidence=round(d.top_p, 4), margin=round(d.margin, 4), system=1, laya_ms=round(d.latency_ms, 1))
             if d.confident or not escalate:
                 self._emit("choice", out)
@@ -51,10 +54,11 @@ class Decisions:
         self._emit("choice", out)
         return out
 
-    async def yes_no(self, state: str, question: str, *, threshold=None, escalate=True, use_laya=True) -> dict:
+    async def yes_no(self, state: str, question: str, *, threshold=None, escalate=True, use_laya=True,
+                     laya_state: str | None = None) -> dict:
         out: dict[str, Any] = {}
         if use_laya:
-            d = await self.s.laya.yes_no(state, question, threshold=threshold)
+            d = await self.s.laya.yes_no(laya_state or state, question, threshold=threshold)
             out.update(answer=d.label == "yes", p_yes=round(d.top_p, 4), system=1, laya_ms=round(d.latency_ms, 1))
             if d.confident or not escalate:
                 self._emit("yes_no", out)
