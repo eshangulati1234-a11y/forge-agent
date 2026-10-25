@@ -386,6 +386,17 @@ def run_wf(wid: str, b: RunBody):
     return {"run_id": S.runtime.enqueue(wid, trigger="manual", inputs=b.inputs, priority=3)}
 
 
+@app.post("/workflows/{wid}/disable", dependencies=[Depends(auth)])
+def disable_wf(wid: str):
+    return S.workflows.disable(wid)
+
+
+@app.post("/workflows/{wid}/enable", dependencies=[Depends(auth)])
+def enable_wf(wid: str):
+    ap = S.workflows.enable(wid)
+    return {"approval_id": ap["id"], "title": ap["title"]}
+
+
 @app.post("/workflows/{wid}/rollback", dependencies=[Depends(auth)])
 def rollback(wid: str, version: int | None = None):
     return S.workflows.rollback(wid, version)

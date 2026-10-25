@@ -292,6 +292,18 @@ def wf_run(workflow_id: str, inputs: str = "{}", wait: bool = True):
         time.sleep(1)
 
 
+@wf.command("disable")
+def wf_disable(workflow_id: str):
+    """Switch a workflow off (retires the deployed version, removes its schedules)."""
+    _print(_c().post(f"/workflows/{workflow_id}/disable"))
+
+
+@wf.command("enable")
+def wf_enable(workflow_id: str):
+    """Request re-deployment of a disabled workflow (needs your approval)."""
+    _print(_c().post(f"/workflows/{workflow_id}/enable"))
+
+
 @wf.command("rollback")
 def wf_rollback(workflow_id: str, version: int | None = None):
     _print(_c().post(f"/workflows/{workflow_id}/rollback", version=version))

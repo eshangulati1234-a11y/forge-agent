@@ -152,6 +152,29 @@ async def test_crash_recovery_resumes_from_checkpoint(services, home, tmp_path):
     assert counter_b.read_text() == "2"      # interrupted local step re-executed (at-least-once)
 
 
+async def test_orphaned_run_reclaimed_immediately(services, tmp_path):
+    deploy(services, wf(tmp_path))
+    rid = services.runtime.enqueue("test.pipeline")
+    services.db.execute("UPDATE runs SET status='running', lease_owner='99999999', lease_expires=? WHERE id=?", (time.time() + 600, rid))
+    assert services.runtime._claim() is None                 # lease still valid: not claimable yet
+    assert services.runtime.reclaim_orphans() == 1          # but its owner process is dead
+    claimed = services.runtime._claim()
+    assert claimed and claimed["id"] == rid
+
+
+async def test_disable_and_enable_workflow(services, tmp_path):
+    from forge.errors import ForgeError
+    deploy(services, wf(tmp_path, triggers=[{"type": "interval", "every_s": 60}]))
+    assert services.db.one("SELECT COUNT(*) n FROM schedules")["n"] == 1
+    services.workflows.disable("test.pipeline")
+    assert services.db.one("SELECT COUNT(*) n FROM schedules")["n"] == 0
+    with pytest.raises(ForgeError, match="no deployed version"):
+        services.runtime.enqueue("test.pipeline")
+    ap = services.workflows.enable("test.pipeline")
+    services.workflows.handle_approval(services.approvals.decide(ap["id"], True))
+    assert services.workflows.deployed("test.pipeline") and services.db.one("SELECT COUNT(*) n FROM schedules")["n"] == 1
+
+
 async def test_interrupted_external_step_waits_for_user(services, tmp_path):
     deploy(services, wf(tmp_path, id="test.ext", steps=[
         {"kind": "tool", "id": "s", "tool": "test.send", "args": {"to": "a@b.c", "body": "x"}}], outputs={}, tests=[]))

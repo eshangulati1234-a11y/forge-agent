@@ -99,8 +99,27 @@ class Runtime:
         self._wake.set()
 
     # ------------------------------------------------------------------ worker loop
+    def reclaim_orphans(self) -> int:
+        """Runs leased by a worker process that no longer exists are reclaimable now, not after the lease expires
+        (the lease still protects against a live-but-slow worker)."""
+        import psutil
+        n = 0
+        for r in self.db.all("SELECT id, lease_owner FROM runs WHERE status='running' AND lease_owner IS NOT NULL AND lease_owner != ?",
+                             (WORKER_ID,)):
+            try:
+                alive = psutil.pid_exists(int(r["lease_owner"]))
+            except ValueError:
+                alive = False
+            if not alive:
+                self.db.execute("UPDATE runs SET lease_expires=0 WHERE id=?", (r["id"],))
+                n += 1
+        if n:
+            log.warning("reclaiming %d run(s) orphaned by a dead worker", n)
+        return n
+
     async def serve(self) -> None:
         log.info("runtime worker %s started", WORKER_ID)
+        self.reclaim_orphans()
         while not self._stopping:
             try:
                 await self._fill_slots()
@@ -167,6 +186,7 @@ class Runtime:
         ctx = {"inputs": inputs, "steps": {}, "run": {"id": run_id, "trigger": run["trigger"], "workflow_id": ir.id}}
         state = _RunState(run_id=run_id, ir=ir, version_id=ver["id"], dry_run=bool(run["dry_run"]),
                           mocks=json.loads(run["inputs_json"] or "{}").get("__mocks__", {}) if run["trigger"] == "test" else {})
+        state.trigger = run["trigger"]
         self.s.events.emit("run.started", run_id=run_id, workflow_id=ir.id, version=ver["version"])
         try:
             missing = [k for k, sp in ir.inputs.items() if sp.required and k not in inputs]
@@ -286,8 +306,10 @@ class Runtime:
             args = render(step.args, ctx)
             if step.tool in st.mocks:
                 return st.mocks[step.tool]
+            # A run the user started by hand (or via the agent in their chat) means they are present: desktop steps may
+            # proceed while they're active. Scheduled/file/webhook runs are unattended and wait for the idle gate.
             tctx = ToolContext(self.s, run_id=st.run_id, workflow_id=st.ir.id, step_path=path, dry_run=st.dry_run,
-                               extra={"permissions": st.ir.permissions})
+                               extra={"permissions": st.ir.permissions, "attended": st.trigger in ("manual", "agent")})
             scope = {"run_id": st.run_id, "workflow_version_id": st.version_id, "step": path}
             return await invoke_tool(self.s, step.tool, args, st.ir.permissions, tctx, interactive=False,
                                      timeout_s=step.timeout_s, scope=scope)
@@ -353,3 +375,4 @@ class Runtime:
 class _RunState:
     def __init__(self, run_id: str, ir: WorkflowIR, version_id: int, dry_run: bool, mocks: dict):
         self.run_id, self.ir, self.version_id, self.dry_run, self.mocks = run_id, ir, version_id, dry_run, mocks
+        self.trigger = "manual"

@@ -141,6 +141,26 @@ class WorkflowStore:
         self.db.audit("user", "workflow.rolled_back", {"workflow_id": workflow_id, "to": prev["version"]})
         return {"workflow_id": workflow_id, "version": prev["version"]}
 
+    def disable(self, workflow_id: str, actor: str = "user") -> dict:
+        """Switch a workflow off: retire the deployed version and remove its schedules. Re-enable = deploy again."""
+        cur = self.deployed(workflow_id)
+        if not cur:
+            raise ForgeError(f"workflow '{workflow_id}' has no deployed version", ErrorClass.INVALID_INPUT)
+        self.db.execute("UPDATE workflow_versions SET status='retired', note=note||' [disabled]' WHERE id=?", (cur["id"],))
+        self.db.execute("DELETE FROM schedules WHERE workflow_id=?", (workflow_id,))
+        self.db.execute("UPDATE runs SET status='cancelled', finished_at=? WHERE workflow_id=? AND status='queued'", (now(), workflow_id))
+        self.db.audit(actor, "workflow.disabled", {"workflow_id": workflow_id, "version": cur["version"]})
+        self.s.events.emit("workflow.disabled", workflow_id=workflow_id)
+        return {"workflow_id": workflow_id, "disabled_version": cur["version"]}
+
+    def enable(self, workflow_id: str, requested_by: str = "user") -> dict:
+        """Re-enabling goes back through the deploy gate (fresh signed approval), like any deploy."""
+        v = self.db.one("SELECT id FROM workflow_versions WHERE workflow_id=? ORDER BY version DESC LIMIT 1", (workflow_id,))
+        if not v:
+            raise ForgeError(f"unknown workflow '{workflow_id}'", ErrorClass.INVALID_INPUT)
+        self.db.execute("UPDATE workflow_versions SET status='draft' WHERE id=? AND status IN ('retired','rejected')", (v["id"],))
+        return self.request_deploy(v["id"], requested_by)
+
     def handle_approval(self, approval: dict) -> Any:
         """Route a decided approval to whatever was waiting on it."""
         subj = json.loads(approval["subject_json"])

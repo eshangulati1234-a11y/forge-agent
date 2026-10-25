@@ -74,6 +74,7 @@ class ForgeTUI(App):
         Binding("ctrl+x", "open('sessions')", "Sessions"), Binding("ctrl+e", "estop", "E-STOP"), Binding("ctrl+q", "quit", "Quit"),
         Binding("a", "approve", "Approve", show=False), Binding("x", "deny", "Deny", show=False), Binding("r", "run_wf", "Run", show=False),
         Binding("b", "rollback", "Rollback", show=False), Binding("e", "export", "Export", show=False), Binding("c", "cancel_run", "Cancel", show=False),
+        Binding("d", "disable_wf", "Disable", show=False),
     ]
 
     def __init__(self, session: str | None = None, continue_last: bool = False):
@@ -490,6 +491,12 @@ class ForgeTUI(App):
             wid, _, inp = rest.partition(" ")
             r = await self.c.post(f"/workflows/{wid}/run", {"inputs": json.loads(inp) if inp else {}})
             self.chat(f"queued [b]{r['run_id']}[/b]")
+        elif cmd == "disable":
+            r = await self.c.post(f"/workflows/{rest}/disable")
+            self.chat(f"disabled {r['workflow_id']} (v{r['disabled_version']} retired, schedules removed)")
+        elif cmd == "enable":
+            r = await self.c.post(f"/workflows/{rest}/enable")
+            self.chat(f"re-deploy requested: approval [b]{r['approval_id']}[/b]")
         elif cmd in ("approve", "deny"):
             aid, _, reason = rest.partition(" ")
             await self._decide_id(aid, cmd == "approve", reason)
@@ -536,6 +543,15 @@ class ForgeTUI(App):
         if self.query_one(TabbedContent).active == "workflows" and self.sel["workflow"]:
             r = await self.c.post(f"/workflows/{self.sel['workflow']}/run", {"inputs": {}})
             self.notify(f"queued {r['run_id']}")
+
+    async def action_disable_wf(self) -> None:
+        if self.query_one(TabbedContent).active == "workflows" and self.sel["workflow"]:
+            try:
+                r = await self.c.post(f"/workflows/{self.sel['workflow']}/disable")
+                self.notify(f"disabled {r['workflow_id']}")
+            except ClientError as e:
+                self.notify(str(e), severity="error")
+            await self.refresh_tables()
 
     async def action_rollback(self) -> None:
         if self.query_one(TabbedContent).active == "workflows" and self.sel["workflow"]:
