@@ -148,6 +148,17 @@ class WorkflowStore:
             if not self.s.approvals.verify(approval):
                 raise ForgeError("approval signature invalid", ErrorClass.PERMISSION_DENIED)
             return self.activate(approval)
+        if approval["status"] == "approved" and subj.get("type") == "register_tool":
+            from pathlib import Path
+
+            from forge.tools.toolgen import register_generated
+            vdir = Path(subj["path"])
+            manifest = json.loads((vdir / "manifest.json").read_text())
+            if sha((vdir / "tool.py").read_text(encoding="utf-8")) != subj["code_sha256"] or not self.s.approvals.verify(approval):
+                raise ForgeError("generated tool changed on disk after approval was requested", ErrorClass.PERMISSION_DENIED)
+            register_generated(self.s, manifest, vdir / "tool.py")
+            self.db.audit("user", "tool.registered", {"name": subj["name"], "code_sha256": subj["code_sha256"]})
+            return {"registered": subj["name"]}
         if approval["status"] == "denied" and subj.get("type") == "deploy":
             self.db.execute("UPDATE workflow_versions SET status='rejected' WHERE id=? AND status='draft'", (subj["version_id"],))
         self.s.runtime.on_approval_decided(approval["id"])

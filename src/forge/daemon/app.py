@@ -58,14 +58,20 @@ async def lifespan(app: FastAPI):
     S.load_builtin_tools()
     S.load_plugins()
     AGENT = Agent(S)
+    from forge.tools.mcp_bridge import McpBridge
+    from forge.tools.toolgen import load_generated
+    bridge = McpBridge(S)
+    mcp_tools = await bridge.start() if S.cfg.mcp_servers else []
+    gen_tools = load_generated(S)
     # sessions that were mid-turn when the daemon died are marked interrupted (user can continue them)
     S.db.execute("UPDATE sessions SET status='interrupted' WHERE status='running'")
     S.db.audit("daemon", "daemon.start", {"tools": len(S.registry.names()), "plugins": S.plugins})
     tasks = [asyncio.create_task(c) for c in (S.runtime.serve(), S.scheduler.serve(), _router_loop(), _gpu_loop())]
     if S.laya is not None:
         asyncio.create_task(asyncio.to_thread(S.laya._ensure))   # warm Laya in the background (~40 s cold)
-    log.info("forged ready: %d tools, plugins=%s", len(S.registry.names()), S.plugins)
+    log.info("forged ready: %d tools (mcp %d, generated %d), plugins=%s", len(S.registry.names()), len(mcp_tools), len(gen_tools), S.plugins)
     yield
+    await bridge.aclose()
     await S.runtime.stop()
     for t in tasks:
         t.cancel()

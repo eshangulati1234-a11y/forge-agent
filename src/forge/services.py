@@ -52,7 +52,9 @@ class Services:
             toast(title, body)
 
     def load_builtin_tools(self) -> None:
+        import forge.agent.loop  # noqa: F401  (agent.delegate)
         import forge.tools.builtin  # noqa: F401  (registers on import)
+        import forge.tools.toolgen  # noqa: F401  (tools.generate)
         try:
             import forge.desktop.tools  # noqa: F401
         except Exception as e:
