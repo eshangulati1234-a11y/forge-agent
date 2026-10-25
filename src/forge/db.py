@@ -45,6 +45,12 @@ class DB:
         schema = resources.files("forge").joinpath("schema.sql").read_text(encoding="utf-8")
         with self._lock:
             self.conn.executescript(schema)
+            from forge.migrations import migrate
+            self.migration = migrate(self.conn, self.path)
+
+    @property
+    def schema_version(self) -> int:
+        return self.one("PRAGMA user_version")["user_version"]
 
     def execute(self, sql: str, params: Iterable[Any] | dict = ()) -> sqlite3.Cursor:
         with self._lock:

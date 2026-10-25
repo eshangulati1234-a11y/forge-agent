@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 
 from forge.config import ForgeConfig, load_config
@@ -29,8 +30,13 @@ class Services:
         self.approvals = Approvals(self.db, self.events, key=approval_key)
         self.policy = PolicyEngine(self.db, self.approvals)
         self.registry = registry or REGISTRY
+        self.registry.disabled = list(self.cfg.tools.disabled)
         self.router = ModelRouter(self.cfg, self.events)
-        self.laya = LayaEngine(self.cfg.laya) if laya is True and self.cfg.laya.enabled else (laya or None)
+        self.started_at = time.time()
+        if laya is True:
+            self.laya = LayaEngine(self.cfg.laya) if self.cfg.laya.enabled else None
+        else:
+            self.laya = laya or None   # tests pass False or a fake engine
         self.records = RecordStore(self.db, self.events)
         self.memory = MemoryStore(self.db, self.router)
         self.resources: dict[str, asyncio.Lock] = {"desktop": asyncio.Lock(), "browser": asyncio.Lock()}

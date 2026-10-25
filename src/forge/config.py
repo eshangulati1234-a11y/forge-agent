@@ -58,12 +58,35 @@ class McpServerConfig(BaseModel):
     side_effect: str = "external"  # MCP tools are untrusted: default to approval-gated
 
 
+class ToolsConfig(BaseModel):
+    disabled: list[str] = Field(default_factory=list, description="tool name globs that are switched off everywhere")
+
+
+class RoutingConfig(BaseModel):
+    pins: dict[str, str] = Field(default_factory=dict, description="capability -> model id override")
+
+
+class TuiConfig(BaseModel):
+    theme: str = "textual-dark"
+    show_timeline: bool = True
+    bell_on_approval: bool = True
+
+
+class SetupConfig(BaseModel):
+    completed: str | None = None  # forge version that finished `forge setup`
+    profile: str | None = None
+
+
 class ForgeConfig(BaseModel):
     daemon: DaemonConfig = Field(default_factory=DaemonConfig)
     nodes: list[NodeConfig] = Field(default_factory=list)
     models: list[ModelConfig] = Field(default_factory=list)
     laya: LayaConfig = Field(default_factory=LayaConfig)
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    tui: TuiConfig = Field(default_factory=TuiConfig)
+    setup: SetupConfig = Field(default_factory=SetupConfig)
     workspace: str = ""           # default writable dir for chat/session tools
     notify_toast: bool = True
 
@@ -151,11 +174,20 @@ def init_home() -> Path:
     return home
 
 
+def config_path() -> Path:
+    return forge_home() / "forge.toml"
+
+
 @lru_cache(maxsize=1)
 def load_config() -> ForgeConfig:
     init_home()
-    data = tomllib.loads((forge_home() / "forge.toml").read_text(encoding="utf-8"))
+    data = tomllib.loads(config_path().read_text(encoding="utf-8"))
     return ForgeConfig.model_validate(data)
+
+
+def reload_config() -> ForgeConfig:
+    load_config.cache_clear()
+    return load_config()
 
 
 def api_token() -> str:

@@ -75,6 +75,14 @@ class ToolContext:
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolSpec] = {}
+        self.disabled: list[str] = []   # globs from settings (tools.disabled)
+
+    def enabled(self, name: str) -> bool:
+        import fnmatch
+        return not any(fnmatch.fnmatchcase(name, p) for p in self.disabled)
+
+    def active(self) -> list[ToolSpec]:
+        return [t for t in self.all() if self.enabled(t.name)]
 
     def register(self, spec: ToolSpec) -> ToolSpec:
         self._tools[spec.name] = spec
@@ -94,6 +102,8 @@ class ToolRegistry:
         words = {w for w in query.lower().replace(".", " ").split() if len(w) > 2}
         scored = []
         for t in self._tools.values():
+            if not self.enabled(t.name):
+                continue
             hay = f"{t.name} {t.description}".lower()
             s = sum(w in hay for w in words)
             if s:

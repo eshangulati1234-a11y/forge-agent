@@ -116,7 +116,7 @@ class Agent:
         names |= {t.name for t in self.s.registry.search(query, 10)}
         used = self.s.db.all("SELECT DISTINCT tool FROM tool_calls WHERE session_id=?", (sid,))
         names |= {r["tool"] for r in used}
-        return [t for t in (self.s.registry.get(n) for n in sorted(names)) if t]
+        return [t for t in (self.s.registry.get(n) for n in sorted(names)) if t and self.s.registry.enabled(t.name)]
 
     # ---- the loop -------------------------------------------------------------------------
     async def run_turn(self, sid: str, user_text: str, *, budget: Budget | None = None, emit=None) -> str:

@@ -72,8 +72,15 @@ class ModelRouter:
         self.events = events
         self.nodes = {n.name: NodeState(n, asyncio.Semaphore(n.max_parallel)) for n in cfg.nodes}
         self.models = cfg.models
-        self.pinned: dict[str, str] = {}   # capability -> model id override (TUI /model)
+        self.pinned: dict[str, str] = dict(cfg.routing.pins)   # capability -> model id (settings: routing.pins)
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(300, connect=5))
+        self.last_call: dict = {}
+
+    def reconfigure(self, cfg: ForgeConfig) -> None:
+        """Live settings update: models and pins change immediately; node list changes need a restart."""
+        self.cfg = cfg
+        self.models = cfg.models
+        self.pinned = dict(cfg.routing.pins)
 
     # ---- health -----------------------------------------------------------------
     async def refresh(self) -> None:
@@ -166,6 +173,14 @@ class ModelRouter:
                 self._fail(n, e)
         raise TransientError(f"no healthy node for '{capability}'")
 
+    def _record(self, res: GenResult, m: ModelConfig) -> None:
+        """Remembered for the TUI status bar (model@node, context usage) and work monitor."""
+        self.last_call = {"model": res.model, "node": res.node, "ms": res.duration_ms, "ctx": m.ctx,
+                          "context_tokens": res.prompt_tokens + res.completion_tokens, "ts": time.time()}
+        if self.events:
+            self.events.emit("model.call", model=res.model, node=res.node, ms=res.duration_ms,
+                             tokens_in=res.prompt_tokens, tokens_out=res.completion_tokens, ctx=m.ctx)
+
     def _fail(self, n: NodeState, e: Exception) -> None:
         n.failures += 1
         log.warning("node %s failure %d: %s", n.cfg.name, n.failures, e)
@@ -226,9 +241,7 @@ class ModelRouter:
                     res = GenResult(msg.get("content") or "", calls, m.id, n.cfg.name, u.get("prompt_tokens", 0),
                                     u.get("completion_tokens", 0), int((time.time() - t) * 1000), d)
             n.failures = 0
-            if self.events:
-                self.events.emit("model.call", model=m.id, node=n.cfg.name, ms=res.duration_ms,
-                                 tokens_in=res.prompt_tokens, tokens_out=res.completion_tokens)
+            self._record(res, m)
             return res
         finally:
             n.queued -= 1
@@ -256,8 +269,10 @@ class ModelRouter:
                             final = d
             n.loaded.add(m.id)
             n.failures = 0
-            yield {"done": GenResult("".join(content), calls, m.id, n.cfg.name, final.get("prompt_eval_count", 0),
-                                     final.get("eval_count", 0), int((time.time() - t) * 1000), final)}
+            res = GenResult("".join(content), calls, m.id, n.cfg.name, final.get("prompt_eval_count", 0),
+                            final.get("eval_count", 0), int((time.time() - t) * 1000), final)
+            self._record(res, m)
+            yield {"done": res}
         finally:
             n.queued -= 1
 

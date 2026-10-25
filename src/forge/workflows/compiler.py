@@ -97,7 +97,7 @@ class Compiler:
 
     def _catalog(self) -> str:
         lines = []
-        for t in self.s.registry.all():
+        for t in self.s.registry.active():
             if t.name.startswith("workflows."):
                 continue
             props = t.json_schema().get("properties", {})

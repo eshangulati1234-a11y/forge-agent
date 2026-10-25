@@ -11,10 +11,42 @@ from pathlib import Path
 
 import typer
 
-app = typer.Typer(no_args_is_help=True, add_completion=False, help="Forge: describe an automation once; Forge builds, verifies, deploys and keeps it running.")
+app = typer.Typer(invoke_without_command=True, add_completion=False,
+                  help="Forge: describe an automation once; Forge builds, verifies, deploys and keeps it running.\n\n"
+                       "Run `forge` with no arguments to set up (first time), start the background service and open the TUI.")
 wf = typer.Typer(help="workflows")
 app.add_typer(wf, name="workflow")
-TASK_NAME = "Forge Daemon"
+cfg_app = typer.Typer(help="view and change settings (forge.toml)")
+app.add_typer(cfg_app, name="config")
+sess_app = typer.Typer(help="chat sessions")
+app.add_typer(sess_app, name="sessions")
+
+
+@app.callback()
+def main(ctx: typer.Context,
+         cont: bool = typer.Option(False, "--continue", "-c", help="resume the most recent chat session"),
+         resume: str = typer.Option(None, "--resume", "-r", help="resume a session by id")):
+    """Bare `forge`: setup if needed -> ensure the daemon is running -> open the TUI."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from forge.config import init_home, reload_config
+    init_home()
+    if not reload_config().setup.completed:
+        typer.secho("First run: let's set Forge up (re-run any time with `forge setup`).", fg="cyan")
+        from forge.setup.wizard import run as setup_run
+        setup_run()
+    from forge import launcher
+    if not launcher.daemon_status():
+        _ensure_ollama()
+        typer.echo("Starting Forge in the background…", nl=False)
+        try:
+            launcher.ensure_daemon(on_wait=lambda: typer.echo(".", nl=False))
+        except RuntimeError as e:
+            typer.secho(f"\n{e}", fg="red")
+            raise typer.Exit(1)
+        typer.echo(" ready")
+    from forge.tui.app import run
+    run(session=resume, continue_last=cont)
 
 
 def _c():
@@ -61,10 +93,132 @@ def daemon(ensure_ollama: bool = typer.Option(True, help="start `ollama serve` i
 
 
 @app.command()
-def tui():
-    """Open the terminal UI (works over SSH)."""
+def tui(cont: bool = typer.Option(False, "--continue", "-c"), resume: str = typer.Option(None, "--resume", "-r")):
+    """Open the terminal UI only (the daemon must be running; bare `forge` starts it for you)."""
     from forge.tui.app import run
-    run()
+    run(session=resume, continue_last=cont)
+
+
+@app.command()
+def setup(yes: bool = typer.Option(False, "--yes", "-y", help="accept safe defaults without prompting"),
+          profile: str = typer.Option(None, help="gpu-8gb | gpu-12gb | gpu-12gb-qwen35 | cpu-only"),
+          install_ollama: bool = typer.Option(False, help="with --yes: allow installing Ollama via winget"),
+          startup: bool = typer.Option(None, help="with --yes: install (or not) the start-at-login task"),
+          no_pull: bool = typer.Option(False, help="skip model downloads")):
+    """First-run wizard: hardware check, model profile, Ollama + models, browser, Laya, start-at-login. Idempotent."""
+    from forge.setup.wizard import run as setup_run
+    raise typer.Exit(setup_run(yes=yes, profile=profile, install_ollama=install_ollama, startup=startup, pull=not no_pull))
+
+
+@app.command()
+def doctor(as_json: bool = typer.Option(False, "--json")):
+    """Check the environment and Forge's health; prints a fix for every problem."""
+    from forge.setup.doctor import as_dicts, run_checks
+    checks = run_checks()
+    if as_json:
+        _print(as_dicts(checks))
+        raise typer.Exit(0)
+    icon = {"ok": ("✓", "green"), "warn": ("!", "yellow"), "fail": ("✗", "red")}
+    group = None
+    for c in checks:
+        if c.group != group:
+            group = c.group
+            typer.secho(f"\n{group}", bold=True)
+        i, col = icon[c.status]
+        typer.secho(f"  {i} {c.name:<22}", fg=col, nl=False)
+        typer.echo(f" {c.detail}")
+        if c.fix:
+            typer.secho(f"      fix: {c.fix}", fg="bright_black")
+    raise typer.Exit(1 if any(c.status == "fail" for c in checks) else 0)
+
+
+@app.command()
+def restart():
+    """Restart the background daemon (applies restart-only settings)."""
+    from forge import launcher
+    launcher.stop_daemon()
+    _ensure_ollama()
+    launcher.ensure_daemon()
+    typer.echo("forged restarted")
+
+
+@app.command()
+def shutdown():
+    """Stop the background daemon. Scheduled workflows will not run until Forge starts again."""
+    from forge import launcher
+    typer.echo("stopped" if launcher.stop_daemon() else "could not stop forged")
+
+
+@cfg_app.command("list")
+def config_list(section: str = typer.Argument(None)):
+    from forge import settings
+    from forge.config import reload_config
+    for s in settings.describe(reload_config()):
+        if section and not s.key.startswith(section):
+            continue
+        val = json.dumps(s.value, default=str) if not isinstance(s.value, str) else s.value
+        typer.secho(f"{s.key:<32}", bold=True, nl=False)
+        typer.echo(f" {val[:70]}" + (" [restart]" if s.apply == "restart" else ""))
+
+
+@cfg_app.command("get")
+def config_get(key: str):
+    from forge import settings
+    from forge.config import reload_config
+    s = settings.find(reload_config(), key)
+    _print({"key": s.key, "value": s.value, "default": s.default, "type": s.type, "apply": s.apply, "description": s.description})
+
+
+@cfg_app.command("set")
+def config_set(key: str, value: str, confirm: bool = typer.Option(False, "--confirm", help="required for security-sensitive keys")):
+    """Set a value. Goes through the daemon when it's running (applied live + audited), else edits forge.toml."""
+    from forge import launcher, settings
+    from forge.client import ClientError, SyncClient
+    if launcher.daemon_status():
+        try:
+            _print(SyncClient().post("/settings", {"key": key, "value": value, "confirm": confirm}))
+        except ClientError as e:
+            typer.secho(str(e), fg="red")
+            raise typer.Exit(1)
+        return
+    from forge.db import DB
+    from forge.errors import InvalidInput
+    try:
+        res = settings.set_value(key, value, confirm_danger=confirm)
+    except InvalidInput as e:
+        typer.secho(str(e), fg="red")
+        raise typer.Exit(1)
+    DB().audit("user", "config.changed", {"key": key, "old": res["old"], "new": res["new"]})
+    _print(res)
+
+
+@cfg_app.command("path")
+def config_path_cmd():
+    from forge.config import config_path
+    typer.echo(str(config_path()))
+
+
+@cfg_app.command("edit")
+def config_edit():
+    """Open forge.toml in $EDITOR (notepad on Windows); validates on close."""
+    import tomllib
+    from forge.config import ForgeConfig, config_path
+    p = config_path()
+    editor = os.environ.get("EDITOR") or ("notepad" if sys.platform == "win32" else "nano")
+    subprocess.run([editor, str(p)])
+    try:
+        ForgeConfig.model_validate(tomllib.loads(p.read_text(encoding="utf-8")))
+        typer.secho("forge.toml is valid. Run `forge restart` (or /reload in the TUI) to apply.", fg="green")
+    except Exception as e:
+        typer.secho(f"forge.toml is INVALID: {e}\nPrevious versions are in ~/.forge/backups/.", fg="red")
+        raise typer.Exit(1)
+
+
+@sess_app.command("list")
+def sessions_list():
+    from forge.db import DB
+    for s in DB().all("SELECT id,title,status,updated_at FROM sessions ORDER BY updated_at DESC LIMIT 30"):
+        typer.echo(f"{s['id']}  {time.strftime('%m-%d %H:%M', time.localtime(s['updated_at']))}  {s['status']:<11} {s['title']}")
 
 
 @app.command()
@@ -173,18 +327,14 @@ def resume():
 @app.command("install-startup")
 def install_startup():
     """Start forged at logon in the interactive session (needed for desktop automation; Session 0 services cannot see the GUI)."""
-    pyw = Path(sys.executable).with_name("pythonw.exe")
-    exe = pyw if pyw.exists() else Path(sys.executable)
-    cmd = f'"{exe}" -m forge.cli daemon'
-    r = subprocess.run(["schtasks", "/Create", "/TN", TASK_NAME, "/SC", "ONLOGON", "/RL", "LIMITED", "/F", "/TR", cmd,
-                        "/DELAY", "0000:30"], capture_output=True, text=True)
-    typer.echo(r.stdout or r.stderr)
+    from forge import launcher
+    typer.echo(launcher.install_startup())
 
 
 @app.command("uninstall-startup")
 def uninstall_startup():
-    r = subprocess.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"], capture_output=True, text=True)
-    typer.echo(r.stdout or r.stderr)
+    from forge import launcher
+    typer.echo(launcher.uninstall_startup())
 
 
 @app.command()

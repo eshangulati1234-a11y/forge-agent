@@ -93,10 +93,173 @@ async def forge_error(_: Request, e: ForgeError):
 def status():
     q = S.db.all("SELECT status, COUNT(*) n FROM runs GROUP BY status")
     return {"ok": True, "emergency_stop": S.policy.stopped(), "nodes": S.router.status(), "gpu": GPU,
-            "laya": {"enabled": S.laya is not None, "loaded": bool(S.laya and S.laya.loaded), "calls": S.laya.calls if S.laya else 0,
-                     "checkpoint": S.cfg.laya.checkpoint},
+            "laya": {"enabled": S.laya is not None and S.cfg.laya.enabled, "loaded": bool(S.laya and S.laya.loaded),
+                     "calls": S.laya.calls if S.laya else 0, "checkpoint": S.cfg.laya.checkpoint},
             "runs": {r["status"]: r["n"] for r in q}, "active_runs": list(S.runtime._tasks), "pending_approvals": len(S.approvals.pending()),
-            "tools": len(S.registry.names()), "plugins": S.plugins, "pinned_models": S.router.pinned}
+            "tools": len(S.registry.names()), "tools_enabled": len(S.registry.active()), "plugins": S.plugins,
+            "pinned_models": S.router.pinned, "last_model_call": S.router.last_call, "uptime_s": time.time() - S.started_at,
+            "schema_version": S.db.schema_version, "busy_sessions": [s for s, t in AGENT._running.items() if not t.done()],
+            "restart_required": sorted(RESTART_PENDING)}
+
+
+RESTART_PENDING: set[str] = set()
+
+
+# ---------------------------------------------------------------- settings / tools / models / doctor / work
+@app.get("/settings", dependencies=[Depends(auth)])
+def get_settings():
+    from forge import settings
+    from forge.config import reload_config
+    return {"settings": settings.as_dicts(reload_config()), "restart_required": sorted(RESTART_PENDING)}
+
+
+class SettingBody(BaseModel):
+    key: str
+    value: Any
+    confirm: bool = False
+
+
+@app.post("/settings", dependencies=[Depends(auth)])
+def set_setting(b: SettingBody):
+    from forge import settings
+    from forge.config import reload_config
+    res = settings.set_value(b.key, b.value, confirm_danger=b.confirm)
+    S.db.audit("user", "config.changed", {"key": b.key, "old": res["old"], "new": res["new"]})
+    if res["apply"] == "live":
+        settings.apply_live(S, reload_config())
+    else:
+        RESTART_PENDING.add(b.key)
+    S.events.emit("config.changed", key=b.key, apply=res["apply"])
+    return {**res, "applied": "live" if res["apply"] == "live" else "restart_required"}
+
+
+@app.post("/settings/reload", dependencies=[Depends(auth)])
+def reload_settings():
+    from forge import settings
+    from forge.config import reload_config
+    settings.apply_live(S, reload_config())
+    S.db.audit("user", "config.reloaded", {})
+    return {"reloaded": True}
+
+
+@app.get("/tools", dependencies=[Depends(auth)])
+def tools():
+    return [{"name": t.name, "description": t.description, "source": t.source, "side_effect": str(t.side_effect),
+             "caps": sorted(t.caps), "enabled": S.registry.enabled(t.name)} for t in S.registry.all()]
+
+
+class ToolToggle(BaseModel):
+    pattern: str
+    enabled: bool
+
+
+@app.post("/tools/enable", dependencies=[Depends(auth)])
+def tool_toggle(b: ToolToggle):
+    disabled = [p for p in S.cfg.tools.disabled if p != b.pattern]
+    if not b.enabled:
+        disabled.append(b.pattern)
+    return set_setting(SettingBody(key="tools.disabled", value=disabled))
+
+
+@app.get("/models/available", dependencies=[Depends(auth)])
+async def models_available():
+    out = []
+    for n in S.router.nodes.values():
+        entry = {"node": n.cfg.name, "url": n.cfg.url, "healthy": n.available(), "models": []}
+        if n.cfg.kind == "ollama":
+            try:
+                tags = (await S.router.client.get(f"{n.cfg.url}/api/tags", timeout=5)).json().get("models", [])
+            except Exception:
+                tags = []
+            configured = {m.id: m for m in S.router.models if m.node == n.cfg.name}
+            for t in tags:
+                c = configured.get(t["name"])
+                out_m = {"id": t["name"], "size_mb": int(t.get("size", 0) / 2**20), "resident": t["name"] in n.loaded,
+                         "params": t.get("details", {}).get("parameter_size"), "quant": t.get("details", {}).get("quantization_level"),
+                         "capabilities": c.capabilities if c else [], "configured": bool(c)}
+                entry["models"].append(out_m)
+        out.append(entry)
+    caps = sorted({c for m in S.router.models for c in m.capabilities})
+    return {"nodes": out, "capabilities": caps, "pins": S.router.pinned}
+
+
+class PullBody(BaseModel):
+    model: str
+    node: str | None = None
+
+
+@app.post("/models/pull", dependencies=[Depends(auth)])
+async def models_pull(b: PullBody):
+    node = S.router.nodes.get(b.node) if b.node else next(iter(S.router.nodes.values()))
+
+    async def go():
+        try:
+            async with S.router.client.stream("POST", f"{node.cfg.url}/api/pull", json={"model": b.model, "stream": True}, timeout=None) as r:
+                last = 0.0
+                async for line in r.aiter_lines():
+                    if not line:
+                        continue
+                    d = json.loads(line)
+                    if time.time() - last > 0.5 or d.get("status") == "success" or "error" in d:
+                        last = time.time()
+                        S.events.emit("model.pull", model=b.model, node=node.cfg.name, status=d.get("status") or d.get("error"),
+                                      completed=d.get("completed"), total=d.get("total"))
+        except Exception as e:
+            S.events.emit("model.pull", model=b.model, status=f"error: {e}")
+    asyncio.create_task(go())
+    return {"pulling": b.model, "node": node.cfg.name}
+
+
+@app.get("/doctor", dependencies=[Depends(auth)])
+async def doctor():
+    from forge.setup.doctor import as_dicts, run_checks
+    return as_dicts(await asyncio.to_thread(run_checks, S.cfg))
+
+
+@app.get("/work", dependencies=[Depends(auth)])
+def work():
+    runs = []
+    for rid in list(S.runtime._tasks):
+        r = S.db.one("SELECT id,workflow_id,trigger,started_at FROM runs WHERE id=?", (rid,))
+        step = S.db.one("SELECT step_path,kind,attempt,started_at FROM step_runs WHERE run_id=? AND status='running' ORDER BY started_at DESC LIMIT 1", (rid,))
+        runs.append({**(r or {"id": rid}), "current_step": step})
+    sessions = []
+    for sid, t in AGENT._running.items():
+        if not t.done():
+            s = S.db.one("SELECT id,title,status FROM sessions WHERE id=?", (sid,))
+            sessions.append(s or {"id": sid})
+    try:
+        from forge.desktop.tools import LEASE
+        lease = LEASE.holder
+    except Exception:
+        lease = None
+    calls = [e for e in S.events.buffer if e["kind"] == "model.call"][-12:]
+    return {"runs": runs, "agent_turns": sessions, "desktop_lease": lease,
+            "queued": S.db.one("SELECT COUNT(*) n FROM runs WHERE status='queued'")["n"],
+            "waiting": S.db.all("SELECT id,workflow_id,status,error FROM runs WHERE status IN ('waiting_approval','waiting_user') ORDER BY created_at DESC LIMIT 20"),
+            "model_calls": calls}
+
+
+class TitleBody(BaseModel):
+    title: str
+
+
+@app.post("/sessions/{sid}/title", dependencies=[Depends(auth)])
+def session_title(sid: str, b: TitleBody):
+    S.db.execute("UPDATE sessions SET title=? WHERE id=?", (b.title[:80], sid))
+    return {"ok": True}
+
+
+@app.post("/shutdown", dependencies=[Depends(auth)])
+async def shutdown():
+    S.db.audit("user", "daemon.shutdown_requested", {})
+
+    async def stop():
+        await asyncio.sleep(0.3)
+        if SERVER is not None:
+            SERVER.should_exit = True
+    asyncio.create_task(stop())
+    return {"stopping": True}
 
 
 @app.post("/stop", dependencies=[Depends(auth)])
@@ -123,10 +286,12 @@ class PinBody(BaseModel):
 
 @app.post("/models/pin", dependencies=[Depends(auth)])
 def pin(b: PinBody):
+    pins = dict(S.cfg.routing.pins)
     if b.model:
-        S.router.pinned[b.capability] = b.model
+        pins[b.capability] = b.model
     else:
-        S.router.pinned.pop(b.capability, None)
+        pins.pop(b.capability, None)
+    set_setting(SettingBody(key="routing.pins", value=pins))   # persisted + audited + applied live
     return S.router.pinned
 
 
@@ -353,11 +518,21 @@ async def ws(sock: WebSocket, token: str = Query("")):
         S.events.unsubscribe(q)
 
 
+SERVER: Any = None
+
+
 def serve() -> None:
+    global SERVER
     import uvicorn
     from forge.config import forge_home, load_config
     cfg = load_config()
     log_path = forge_home() / "logs" / "forged.log"
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-                        handlers=[logging.FileHandler(log_path, encoding="utf-8"), logging.StreamHandler()])
-    uvicorn.run(app, host=cfg.daemon.host, port=cfg.daemon.port, log_level="warning")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handlers: list[logging.Handler] = [logging.FileHandler(log_path, encoding="utf-8")]
+    import sys
+    if sys.stderr is not None and "pythonw" not in sys.executable.lower():
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
+    SERVER = uvicorn.Server(uvicorn.Config(app, host=cfg.daemon.host, port=cfg.daemon.port, log_level="warning",
+                                           log_config=None))
+    SERVER.run()

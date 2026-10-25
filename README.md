@@ -18,13 +18,18 @@ winget install Ollama.Ollama
 ollama pull qwen3:8b; ollama pull qwen3:4b; ollama pull qwen3-embedding:0.6b; ollama pull qwen2.5vl:7b
 git clone <this repo>; cd forge
 uv sync                      # CUDA torch via the pytorch-cu126 index (see pyproject.toml)
-uv run playwright install chromium
-uv run forge init            # creates ~/.forge (forge.toml, token)
-uv run forge daemon          # starts ollama serve if needed, then forged on 127.0.0.1:8765
-uv run forge tui             # in another terminal, or over SSH
+uv run forge                 # first run: setup wizard → starts the background daemon → opens the TUI
 ```
-Optional: `uv run forge install-startup` registers forged as a logon task (needed for unattended desktop automation;
-a Windows service runs in Session 0 and can't see the desktop).
+That's it. `forge` always does the same thing: run setup if it was never completed, start `forged` in the background if
+it isn't running (it keeps running when you close the TUI), and open the terminal UI. `forge -c` resumes your last chat.
+
+| Command | What it does |
+|---|---|
+| `forge setup` | hardware check → model profile → Ollama + models → browser → Laya → start-at-login (idempotent; `--yes` for defaults) |
+| `forge doctor` | health checks with a fix for every problem |
+| `forge config list / get / set / edit` | settings (validated, comments preserved, audited; live where possible) |
+| `forge restart` / `forge shutdown` | restart or stop the background daemon |
+| `forge install-startup` | start forged at logon (needed for unattended runs; a Windows service runs in Session 0 and can't see the desktop) |
 
 ## Try it
 ```powershell
@@ -39,13 +44,26 @@ CareerPilot: edit `~/.forge/careerpilot/profile.yaml` and mark true facts `verif
 cover letters. Forge never submits applications or sends messages without your approval, never scrapes sites that
 forbid it, and never bypasses CAPTCHAs.
 
-## TUI keys
-F1 Chat · F2 Runs · F3 Workflows · F4 Approvals (a approve / x deny) · F5 Records (e export) · F6 Memory · F7 Activity ·
-Ctrl+X twice = EMERGENCY STOP · `/help` for slash commands.
+## TUI
+Type `/` for commands (floating autocomplete, Tab completes) or Ctrl+P for the command palette.
+
+| Key | |
+|---|---|
+| Ctrl+O | settings editor (every setting, live/restart badge, validation) |
+| Ctrl+T | live work monitor (runs + current step, agent turns, desktop lease, model calls) |
+| Ctrl+X | session switcher |
+| `/model` · `/tools` · `/doctor` | model picker (pin per capability, pull models) · enable/disable tools · health checks |
+| Ctrl+C | clear draft, then interrupt the agent · Ctrl+D quit on empty prompt |
+| Ctrl+E twice | EMERGENCY STOP |
+| F1–F7 | Chat · Runs · Workflows · Approvals · Records · Memory · Activity |
+
+Approvals pop up as a modal showing exactly what will happen (a approve, d deny, Esc later). Messages typed while the
+agent is busy are queued. There is deliberately no "skip approvals" mode, and the agent cannot change settings.
 
 ## Layout
 ```
 src/forge/   agent/ browser/ daemon/ desktop/ memory/ models/ policy/ records/ runtime/ tools/ tui/ workflows/
 plugins/careerpilot/   collections, tools, job_watch workflow (a plugin, not core)
-tests/                 37 tests: policy, runtime + crash recovery, Excel, router, browser, MCP, toolgen, CareerPilot
+tests/                 50 tests: policy, runtime + crash recovery, Excel, router, browser, MCP, toolgen, CareerPilot,
+                       migrations, settings, doctor, detached daemon + headless TUI
 ```

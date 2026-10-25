@@ -22,6 +22,9 @@ async def invoke_tool(services, name: str, raw_args: dict, perms: Permissions, c
     started = time.time()
     if spec is None:
         raise InvalidInput(f"unknown tool '{name}'", suggestions=[t.name for t in services.registry.search(name, 5)])
+    if not services.registry.enabled(spec.name):
+        from forge.errors import PermissionDenied
+        raise PermissionDenied(f"tool '{spec.name}' is disabled in settings (tools.disabled)")
     try:
         args = spec.validate(raw_args)
     except ValidationError as e:
