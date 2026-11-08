@@ -72,6 +72,13 @@ class TuiConfig(BaseModel):
     bell_on_approval: bool = True
 
 
+class BrowserConfig(BaseModel):
+    executable: str = ""          # Chromium-based browser to drive (Brave, Edge, Chrome); empty = Playwright's Chromium
+    headless: bool = False
+    show_cursor: bool = True
+    action_delay_ms: int = Field(300, ge=0, le=2000)
+
+
 class SetupConfig(BaseModel):
     completed: str | None = None  # forge version that finished `forge setup`
     profile: str | None = None
@@ -86,6 +93,7 @@ class ForgeConfig(BaseModel):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     tui: TuiConfig = Field(default_factory=TuiConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
     workspace: str = ""           # default writable dir for chat/session tools
     notify_toast: bool = True

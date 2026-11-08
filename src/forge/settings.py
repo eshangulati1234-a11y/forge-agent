@@ -24,13 +24,17 @@ from forge.errors import InvalidInput
 
 SECTIONS = {
     "daemon": "Daemon", "laya": "Laya (System 1)", "routing": "Models & Routing", "models": "Models & Routing",
-    "nodes": "Nodes", "tools": "Tools", "tui": "Terminal UI", "mcp_servers": "MCP servers", "setup": "Setup",
+    "nodes": "Nodes", "tools": "Tools", "tui": "Terminal UI", "browser": "Browser", "mcp_servers": "MCP servers", "setup": "Setup",
     "workspace": "General", "notify_toast": "General",
 }
-RESTART_KEYS = {"daemon.host", "daemon.port", "nodes", "mcp_servers", "laya.device"}
+RESTART_KEYS = {"daemon.host", "daemon.port", "nodes", "mcp_servers", "laya.device", "browser.executable"}
+RESTART_KEYS.update({"browser.headless", "browser.show_cursor", "browser.action_delay_ms"})
 HIDDEN = {"setup.completed"}
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 DESCRIPTIONS = {
+    "browser.headless": "Hide browser windows. Off by default so you can watch Forge work. Restart required.",
+    "browser.show_cursor": "Show the Forge cursor and action highlights inside visible browser pages. Restart required.",
+    "browser.action_delay_ms": "Pause before each visible browser action (0–2000 ms). Restart required.",
     "daemon.host": "Bind address. Keep 127.0.0.1; reach Forge remotely over SSH instead of exposing the API.",
     "daemon.port": "Local API port.",
     "daemon.max_concurrent_runs": "Workflow runs executed at the same time.",
@@ -47,6 +51,7 @@ DESCRIPTIONS = {
     "tui.theme": "Textual theme name.",
     "tui.show_timeline": "Show the tool timeline beside the chat.",
     "tui.bell_on_approval": "Ring the terminal bell when an approval is needed.",
+    "browser.executable": "Chromium-based browser to drive, e.g. C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe (empty = Playwright's Chromium).",
     "workspace": "Folder the agent may write to in chat sessions (empty = ~/.forge/workspace).",
     "notify_toast": "Show Windows toast notifications.",
     "models": "Models and the capabilities they serve (JSON list).",
@@ -196,6 +201,7 @@ def apply_live(services, new: ForgeConfig) -> None:
     old = services.cfg
     new.daemon.host, new.daemon.port = old.daemon.host, old.daemon.port   # bound sockets can't move live
     new.nodes, new.mcp_servers = old.nodes, old.mcp_servers
+    new.browser = old.browser.model_copy()   # BrowserManager keeps launch and visualization settings until restart
     services.cfg = new
     services.router.reconfigure(new)
     services.registry.disabled = list(new.tools.disabled)

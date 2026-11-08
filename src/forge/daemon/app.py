@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import time
 from contextlib import asynccontextmanager
@@ -77,6 +78,13 @@ async def lifespan(app: FastAPI):
         t.cancel()
     S.db.audit("daemon", "daemon.stop", {})
     await S.router.aclose()
+    import forge.browser.tools as bt
+    if bt._MGR is not None:   # otherwise the Forge-profile browser windows outlive the daemon
+        try:
+            await asyncio.wait_for(bt._MGR.close(), 10)
+        except Exception as e:
+            log.warning("browser close failed: %s", e)
+        bt._MGR = None
 
 
 app = FastAPI(title="forged", lifespan=lifespan)
@@ -547,3 +555,8 @@ def serve() -> None:
     SERVER = uvicorn.Server(uvicorn.Config(app, host=cfg.daemon.host, port=cfg.daemon.port, log_level="warning",
                                            log_config=None))
     SERVER.run()
+    # The lifespan cleanup has run. Non-daemon threads (Playwright, torch, watchdog) used to keep the process alive
+    # after /shutdown, so every `forge restart` left an old daemon behind (nine of them were found running).
+    logging.getLogger("forge.daemon").info("forged stopped")
+    logging.shutdown()
+    os._exit(0)

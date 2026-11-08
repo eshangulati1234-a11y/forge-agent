@@ -102,6 +102,10 @@ def check_laya(cfg) -> Check:
 
 
 def check_playwright(cfg) -> Check:
+    if cfg.browser.executable:
+        exe = Path(cfg.browser.executable)
+        return _c("browser", exe.is_file(), str(exe), "forge config set browser.executable <path to brave.exe / msedge.exe>",
+                  group="automation")
     root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ms-playwright"))
     ok = root.exists() and any(root.glob("chromium-*"))
     return _c("playwright chromium", ok, str(root), "uv run playwright install chromium", warn=True, group="automation")

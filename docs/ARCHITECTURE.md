@@ -197,6 +197,10 @@ flowchart LR
 
 ## 7. Browser (`forge/browser/*`)
 - Playwright Chromium with a persistent profile per name. Logins are user-assisted (`headless=false`), and Forge never handles passwords.
+- Browser windows are visible by default, with a decorative Forge cursor, target highlights, and click pulses.
+  `browser.headless`, `browser.show_cursor`, and `browser.action_delay_ms` (default 300, range 0–2000) require restart.
+  Explicit workflow `headless` overrides remain supported; conflicting launch modes on an open profile raise
+  `needs_user` without closing the existing session. The overlay never sends Windows input or enters extracted page text.
 - `snapshot` returns tagged interactive elements (role, accessible name, value) plus page text. `browser.find` uses Laya, with the LLM as fallback.
 - `browser.act` refuses submit/send/apply/buy/delete-looking controls. `browser.submit` is `external`, so it always needs approval.
 - CAPTCHA, Turnstile and "verify you are human" pages raise `needs_user`. **No bypass.**
