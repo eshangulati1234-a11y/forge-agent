@@ -7,9 +7,6 @@ RTX GPUs, with no cloud inference.
 - Deterministic by default: deployed workflows call models only at explicit `llm` / `decide` steps.
 - **Laya** (non-autoregressive System 1) for fast, grounded decisions; a local LLM (System 2) when Laya isn't sure.
 - Windows desktop (UI Automation), browser (Playwright), Excel-backed records, MCP tools, self-built pure-compute tools.
-`excel.create` builds a new verified `.xlsx` from headers and rows without opening Excel, and `excel.open` launches
-it in Microsoft Excel using Windows application registration when Office is not on PATH. Existing files are never
-overwritten by `excel.create`.
 
 Browser automation opens a visible window by default. A purple Forge cursor shows each target, with a highlight
 and click pulse, while your Windows pointer stays free. Fields fill immediately rather than character by character.
@@ -19,8 +16,19 @@ Restart Forge after changing these settings. Existing workflow calls with an exp
 behavior; changing the launch mode of an already-open profile requires restarting Forge and never closes your
 current form automatically. The cursor covers webpage content, not browser chrome or native dialogs.
 
-Browser tools can open separate tabs with `browser.open` and `new_tab=true`; `browser.download` is for files.
+In the chat composer, Shift+Tab inserts a new line (Alt+Enter and Ctrl+J also work). Up/Down recall previous/next
+prompts at the first/last visible line, while arrows inside a multiline draft move normally. Down past the newest
+prompt restores your unfinished draft. Resuming a chat restores its prompt history; `/new` starts fresh.
 
+The conversation follows streaming text while you are at the bottom. Scroll up to read earlier messages without
+being pulled down; click the floating **↓ Latest** button to jump back and follow new text again.
+
+Ctrl+C copies selected text; otherwise it interrupts an active turn immediately, including when a draft is present.
+Interrupting clears queued prompts. An operating-system call already executing in a background thread may still finish.
+Browser tools can open separate tabs with `browser.open` and `new_tab=true`; `browser.download` is for files.
+`excel.create` builds a new verified `.xlsx` from headers and rows without opening Excel, and `excel.open` launches
+it in Microsoft Excel using Windows application registration when Office is not on PATH. Existing files are never
+overwritten by `excel.create`.
 - Default-deny permissions, approvals bound to exact actions, emergency stop, hash-chained audit log.
 - A terminal UI that works over SSH; closing it never stops anything.
 
@@ -59,7 +67,13 @@ cover letters. Forge never submits applications or sends messages without your a
 forbid it, and never bypasses CAPTCHAs.
 
 ## TUI
-Type `/` for commands (floating autocomplete, Tab completes) or Ctrl+P for the command palette.
+Forge opens a single conversation view with a black background, white text, and coloured status bullets. Tool summaries appear inline; replies stream into the conversation with Markdown formatting. An animated activity line shows thinking, tool execution, response streaming, and approval waits.
+
+Type `/` for commands or `/keyword` to search commands and registered tools/functions by name or description (floating autocomplete, Tab completes commands or shows tool details). `/help` lists commands, tools and keyboard shortcuts; Ctrl+P opens the command palette.
+
+Open management views with `/runs`, `/workflows`, `/approvals`, `/records`, `/memory`, or `/activity`. Press Escape or F1 to return to chat. Detailed metrics remain available in `/status` and `/work`.
+
+The default theme is `forge-black`. Use `/set tui.animations false` for a static activity indicator, or `/set tui.show_timeline false` to hide inline tool summaries.
 
 | Key | |
 |---|---|
