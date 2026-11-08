@@ -29,6 +29,8 @@ COMMANDS: list[Command] = [
     # session
     Command("new", "", "Session", "start a new chat session"),
     Command("sessions", "", "Session", "switch session (picker)  · Ctrl+X"),
+    Command("history", "[search]", "Session", "browse saved chats by title or session ID"),
+    Command("resume", "[session ID or search]", "Session", "reopen a saved chat; omit arguments for the history picker"),
     Command("title", "<name>", "Session", "rename this session"),
     Command("interrupt", "", "Session", "stop the agent's current turn  · Ctrl+C on empty prompt"),
     Command("queue", "[clear]", "Session", "show or clear messages queued while the agent is busy"),
@@ -59,7 +61,7 @@ COMMANDS: list[Command] = [
     Command("remember", "<fact>", "Automation", "store a user-stated fact (trusted memory)"),
     # safety
     Command("stop", "", "Safety", "EMERGENCY STOP all actions  · Ctrl+E Ctrl+E"),
-    Command("resume", "", "Safety", "clear the emergency stop and re-enable actions"),
+    Command("unstop", "", "Safety", "clear the emergency stop and re-enable actions"),
     Command("help", "", "Help", "this help"),
     Command("quit", "", "Help", "close the TUI (Forge keeps running)"),
 ]

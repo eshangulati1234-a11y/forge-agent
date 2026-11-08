@@ -16,6 +16,12 @@ Restart Forge after changing these settings. Existing workflow calls with an exp
 behavior; changing the launch mode of an already-open profile requires restarting Forge and never closes your
 current form automatically. The cursor covers webpage content, not browser chrome or native dialogs.
 
+Chats are saved automatically. Use `/history` to browse them, search titles or session IDs, and press Enter to
+reopen a conversation. Ctrl+Right/Left pages through older/newer chats. `/resume` opens the same picker;
+`/resume <session ID or search>` opens a unique match directly. `/sessions` and Ctrl+X remain available.
+Resuming restores the saved transcript and continues the same conversation on your next message. In the terminal
+UI, `/unstop` now clears the emergency stop; `/resume` only reopens chats. The `forge resume` CLI command is unchanged.
+
 In the chat composer, Shift+Tab inserts a new line (Alt+Enter and Ctrl+J also work). Up/Down recall previous/next
 prompts at the first/last visible line, while arrows inside a multiline draft move normally. Down past the newest
 prompt restores your unfinished draft. Resuming a chat restores its prompt history; `/new` starts fresh.

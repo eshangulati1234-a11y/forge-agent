@@ -308,6 +308,11 @@ def models():
     return [m.model_dump() for m in S.router.models]
 
 
+@app.get("/models/loaded", dependencies=[Depends(auth)])
+async def models_loaded():
+    return await S.router.loaded_models()
+
+
 # ---------------------------------------------------------------- chat
 @app.post("/sessions", dependencies=[Depends(auth)])
 def new_session():
@@ -315,18 +320,22 @@ def new_session():
 
 
 @app.get("/sessions", dependencies=[Depends(auth)])
-def sessions():
-    return AGENT.sessions()
+def sessions(limit: int = Query(30, ge=1, le=200), offset: int = Query(0, ge=0), q: str = ""):
+    return AGENT.sessions(limit, offset, q)
+
+
+@app.get("/sessions/{sid}", dependencies=[Depends(auth)])
+def session_info(sid: str):
+    row = S.db.one("SELECT * FROM sessions WHERE id=?", (sid,))
+    if not row:
+        raise HTTPException(404, f"no session {sid}")
+    return row
 
 
 @app.get("/sessions/{sid}/messages", dependencies=[Depends(auth)])
-def messages(sid: str, limit: int = 100):
-    return AGENT.history(sid, limit)
+def messages(sid: str, limit: int = Query(100, ge=1, le=1000), before_id: int | None = None):
+    return AGENT.history(sid, limit, before_id)
 
-
-@app.get("/models/loaded", dependencies=[Depends(auth)])
-async def models_loaded():
-    return await S.router.loaded_models()
 
 @app.get("/sessions/{sid}/context", dependencies=[Depends(auth)])
 async def session_context(sid: str):
@@ -334,6 +343,7 @@ async def session_context(sid: str):
         raise HTTPException(404, f"no session {sid}")
     return {**AGENT.context_info(sid), "busy": sid in AGENT._running and not AGENT._running[sid].done(),
             "loaded_models": await S.router.loaded_models()}
+
 
 @app.post("/sessions/{sid}/compact", dependencies=[Depends(auth)])
 async def compact_session(sid: str):

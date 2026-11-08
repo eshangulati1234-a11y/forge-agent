@@ -298,34 +298,69 @@ class ToolsScreen(_Base):
 
 # ------------------------------------------------------------------------------------- sessions
 class SessionsScreen(_Base):
-    BINDINGS = _Base.BINDINGS + [Binding("ctrl+n", "new", "new session")]
+    BINDINGS = _Base.BINDINGS + [Binding("ctrl+n", "new", "new session"),
+                                Binding("ctrl+right", "next_page", "older chats", priority=True),
+                                Binding("ctrl+left", "previous_page", "newer chats", priority=True)]
+
+    def __init__(self, search: str = ""):
+        super().__init__()
+        self.search = search
+        self.sessions: list[dict] = []
+        self.page_offset = 0
+        self.has_more = False
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal"):
-            yield Label("Sessions  ·  type to filter · Enter resume · Ctrl+N new · Esc", classes="modal-title")
-            yield Input(placeholder="filter", id="filter")
+            yield Label("Chat history  ·  Enter resume · Ctrl+N new · Esc close", classes="modal-title")
+            yield Input(value=self.search, placeholder="Search title or session ID", id="filter")
+            yield Static("Ctrl+Left newer chats · Ctrl+Right older chats", classes="hint")
             yield OptionList(id="sess")
+            yield Static("", id="session-page", classes="hint")
 
     async def on_mount(self) -> None:
-        self.sessions = await self.c.get("/sessions")
-        self.render_list()
+        self.refresh_list()
         self.query_one("#filter", Input).focus()
 
+    @work(exclusive=True)
+    async def refresh_list(self) -> None:
+        self.query_one("#sess", OptionList).clear_options()
+        try:
+            rows = await self.c.get("/sessions", q=self.query_one("#filter", Input).value.strip(),
+                                    limit=51, offset=self.page_offset)
+        except ClientError as e:
+            self.query_one("#session-page", Static).update(Text(str(e), style="red"))
+            return
+        # Older running daemons ignore q; keep filtering useful until they are restarted.
+        query = self.query_one("#filter", Input).value.strip().lower()
+        rows = [s for s in rows if query in (s.get("title") or "").lower() or query in s["id"].lower()]
+        self.sessions, self.has_more = rows[:50], len(rows) > 50
+        self.render_list()
+
     def render_list(self) -> None:
-        f = self.query_one("#filter", Input).value.lower()
         ol = self.query_one("#sess", OptionList)
         ol.clear_options()
         for s in self.sessions:
-            if f and f not in (s["title"] or "").lower() and f not in s["id"]:
-                continue
             ol.add_option(Option(Text.assemble((f"{ts(s['updated_at'])}  ", "dim"), (s["title"] or "(untitled)", "bold"),
                                                (f"  {s['status']}", "yellow" if s["status"] != "idle" else "dim"), (f"  {s['id']}", "dim")), id=s["id"]))
         if ol.option_count:
             ol.highlighted = 0
+        self.query_one("#session-page", Static).update(
+            f"Chats {self.page_offset + 1}–{self.page_offset + len(self.sessions)}" if self.sessions else "No saved chats found.")
+
+    def action_next_page(self) -> None:
+        if self.has_more:
+            self.page_offset += 50
+            self.refresh_list()
+
+    def action_previous_page(self) -> None:
+        if self.page_offset:
+            self.page_offset = max(0, self.page_offset - 50)
+            self.refresh_list()
 
     @on(Input.Changed, "#filter")
     def _f(self, _ev) -> None:
-        self.render_list()
+        self.page_offset = 0
+        self.refresh_list()
 
     @on(Input.Submitted, "#filter")
     def _enter(self, _ev) -> None:
