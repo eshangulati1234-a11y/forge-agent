@@ -11,6 +11,16 @@ RTX GPUs, with no cloud inference.
 it in Microsoft Excel using Windows application registration when Office is not on PATH. Existing files are never
 overwritten by `excel.create`.
 
+Browser automation opens a visible window by default. A purple Forge cursor shows each target, with a highlight
+and click pulse, while your Windows pointer stays free. Fields fill immediately rather than character by character.
+In Settings, use `browser.headless` to hide the window, `browser.show_cursor` to toggle the overlay, and
+`browser.action_delay_ms` to adjust the pause before visible actions (default 300 ms, range 0–2000).
+Restart Forge after changing these settings. Existing workflow calls with an explicit `headless` value keep their
+behavior; changing the launch mode of an already-open profile requires restarting Forge and never closes your
+current form automatically. The cursor covers webpage content, not browser chrome or native dialogs.
+
+Browser tools can open separate tabs with `browser.open` and `new_tab=true`; `browser.download` is for files.
+
 - Default-deny permissions, approvals bound to exact actions, emergency stop, hash-chained audit log.
 - A terminal UI that works over SSH; closing it never stops anything.
 

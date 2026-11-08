@@ -80,14 +80,40 @@ def stop_daemon(timeout: float = 15.0) -> bool:
     end = time.time() + timeout
     while time.time() < end:
         if not daemon_status(0.5):
+            _reap(timeout=5.0)
             return True
         time.sleep(0.4)
     pid = _port_pid(load_config().daemon.port)
     if pid:
         import psutil
         psutil.Process(pid).kill()
-        return True
+    _reap(timeout=0)
     return not daemon_status(0.5)
+
+
+def _reap(timeout: float) -> None:
+    """The API going quiet doesn't mean the process exited: make sure the process tree we spawned is gone."""
+    import psutil
+    try:
+        root = psutil.Process(int(pid_file().read_text().strip()))
+        procs = [root, *root.children(recursive=True)]
+    except (OSError, ValueError, psutil.Error):
+        return
+    procs = [p for p in procs if "forge.cli" in " ".join(_cmdline(p))]   # never a reused PID's process
+    _, alive = psutil.wait_procs(procs, timeout=timeout)
+    for p in alive:
+        try:
+            p.kill()
+        except psutil.Error:
+            pass
+
+
+def _cmdline(p) -> list[str]:
+    import psutil
+    try:
+        return p.cmdline()
+    except psutil.Error:
+        return []
 
 
 def _port_pid(port: int) -> int | None:

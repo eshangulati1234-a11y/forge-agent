@@ -45,6 +45,29 @@ def test_restart_keys_flagged(home):
     assert settings.find(reload_config(), "laya.accept_threshold").apply == "live"
 
 
+def test_browser_visibility_settings(home):
+    cfg = reload_config()
+    assert not cfg.browser.headless and cfg.browser.show_cursor
+    assert cfg.browser.action_delay_ms == 300
+    for key, value in [("browser.headless", "true"), ("browser.show_cursor", "false"),
+                       ("browser.action_delay_ms", "500")]:
+        assert settings.set_value(key, value)["apply"] == "restart"
+    cfg = reload_config()
+    assert cfg.browser.headless and not cfg.browser.show_cursor and cfg.browser.action_delay_ms == 500
+    before = config_path().read_text(encoding="utf-8")
+    for value in ("-1", "2001"):
+        with pytest.raises(InvalidInput):
+            settings.set_value("browser.action_delay_ms", value)
+    assert config_path().read_text(encoding="utf-8") == before
+
+
+def test_browser_settings_wait_for_restart(services):
+    settings.set_value("browser.headless", "true")
+    settings.set_value("browser.show_cursor", "false")
+    settings.apply_live(services, reload_config())
+    assert not services.cfg.browser.headless and services.cfg.browser.show_cursor
+
+
 async def test_live_apply_pins_thresholds_and_disabled_tools(services):
     settings.set_value("routing.pins", '{"reasoning": "qwen3:4b"}')
     settings.set_value("laya.accept_threshold", "0.42")
