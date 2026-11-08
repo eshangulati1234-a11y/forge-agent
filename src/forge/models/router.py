@@ -104,6 +104,23 @@ class ModelRouter:
             log.warning("node %s unhealthy: %s", n.cfg.name, e)
         n.last_check = time.time()
 
+    async def loaded_models(self) -> list[dict]:
+        """Models resident on each Ollama node right now, with their memory use and when keep_alive unloads them."""
+        out = []
+        for n in self.nodes.values():
+            if n.cfg.kind != "ollama":
+                continue
+            try:
+                r = await self.client.get(f"{n.cfg.url}/api/ps", timeout=3)
+                r.raise_for_status()
+            except httpx.HTTPError as e:
+                out.append({"node": n.cfg.name, "error": str(e)[:200]})
+                continue
+            for m in r.json().get("models", []):
+                out.append({"node": n.cfg.name, "name": m["name"], "size_mb": m.get("size", 0) // 2**20,
+                            "vram_mb": m.get("size_vram", 0) // 2**20, "ctx": m.get("context_length"), "expires_at": m.get("expires_at")})
+        return out
+
     def status(self) -> list[dict]:
         return [{"name": n.cfg.name, "url": n.cfg.url, "kind": n.cfg.kind, "healthy": n.available(), "queued": n.queued,
                  "loaded": sorted(n.loaded), "latency_ms": round(n.latency_ms, 1), "failures": n.failures}
@@ -284,7 +301,8 @@ class ModelRouter:
             try:
                 async with n.sem:
                     if n.cfg.kind == "ollama":
-                        r = await self.client.post(f"{n.cfg.url}/api/embed", json={"model": m.id, "input": texts, "keep_alive": "30m"})
+                        r = await self.client.post(f"{n.cfg.url}/api/embed", json={"model": m.id, "input": texts, "keep_alive": "30m",
+                                                                       "options": {"num_ctx": m.ctx}})
                         r.raise_for_status()
                         return r.json()["embeddings"]
                     r = await self.client.post(f"{n.cfg.url}/v1/embeddings", json={"model": m.id, "input": texts},

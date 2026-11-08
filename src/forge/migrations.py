@@ -21,6 +21,8 @@ MIGRATIONS: list[Migration] = [
     (1, "baseline schema (schema.sql)", ""),
     (2, "index runs by workflow for the TUI run lists",
      "CREATE INDEX IF NOT EXISTS runs_workflow ON runs(workflow_id, created_at)"),
+    (3, "messages folded into a session summary by /compact stay visible but leave the model context",
+     "ALTER TABLE messages ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0"),
 ]
 LATEST = MIGRATIONS[-1][0]
 

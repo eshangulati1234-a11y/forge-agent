@@ -324,6 +324,24 @@ def messages(sid: str, limit: int = 100):
     return AGENT.history(sid, limit)
 
 
+@app.get("/models/loaded", dependencies=[Depends(auth)])
+async def models_loaded():
+    return await S.router.loaded_models()
+
+@app.get("/sessions/{sid}/context", dependencies=[Depends(auth)])
+async def session_context(sid: str):
+    if not S.db.one("SELECT id FROM sessions WHERE id=?", (sid,)):
+        raise HTTPException(404, f"no session {sid}")
+    return {**AGENT.context_info(sid), "busy": sid in AGENT._running and not AGENT._running[sid].done(),
+            "loaded_models": await S.router.loaded_models()}
+
+@app.post("/sessions/{sid}/compact", dependencies=[Depends(auth)])
+async def compact_session(sid: str):
+    if sid in AGENT._running and not AGENT._running[sid].done():
+        raise HTTPException(409, "session is busy; wait for the turn to finish or interrupt it first")
+    return await AGENT.compact(sid)
+
+
 class ChatBody(BaseModel):
     text: str
 
