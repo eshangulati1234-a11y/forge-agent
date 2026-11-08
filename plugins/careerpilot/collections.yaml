@@ -88,3 +88,23 @@ collections:
       - {name: evidence, type: string, width: 36, description: "verifiable evidence (project, course, role)"}
       - {name: demand_count, type: integer, min: 0}
       - {name: priority, type: enum, enum: [High, Medium, Low]}
+
+  - name: linkedin_jobs
+    title: LinkedIn AI Jobs
+    id_prefix: LIJ
+    key_fields: [apply_link]                     # LinkedIn job URL without tracking params
+    fields:
+      - {name: priority, type: integer, min: 1, max: 3, width: 8, description: "1 = sponsors visas, 2 = accepts international students, 3 = other"}
+      - {name: job_title, type: string, required: true, width: 34}
+      - {name: company, type: string, required: true, width: 22}
+      - {name: location, type: string, width: 22}
+      - {name: work_mode, type: enum, enum: [On-site, Hybrid, Remote, Not stated], width: 11}
+      - {name: description_summary, type: text, width: 50}
+      - {name: years_experience, type: string, width: 12}
+      - {name: apply_link, type: url, required: true, width: 40}
+      - {name: international_students_accepted, type: enum, enum: ["Yes", "Likely", "No", "Not stated"], width: 14}
+      - {name: visa_sponsorship, type: enum, enum: ["Yes", "No", "Not stated"], width: 12}
+      - {name: work_rights_evidence, type: text, width: 40, description: "exact sentence from the posting the two fields above are based on"}
+      - {name: expected_pay, type: string, width: 18, description: "only as stated in the posting; never estimated"}
+      - {name: posted_date, type: string, width: 13}
+      - {name: date_collected, type: date, width: 13}
