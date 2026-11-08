@@ -49,9 +49,15 @@ def test_complexity_low_prefers_small():
 
 @pytest.mark.skipif("not __import__('httpx').get('http://127.0.0.1:11434/api/version').is_success", reason="ollama not running")
 async def test_live_ollama_tool_call():
-    from forge.config import ForgeConfig
+    # The model configured for tool calling on this machine (it was hard-coded to qwen3:8b, which may not be installed).
+    from forge.config import load_config
+    load_config.cache_clear()
+    have = {t["name"] for t in httpx.get("http://127.0.0.1:11434/api/tags", timeout=5).json().get("models", [])}
+    model = next((m.id for m in load_config().models if "tool_calling" in m.capabilities and m.id in have), None)
+    if model is None:
+        pytest.skip("no configured tool_calling model is installed in Ollama")
     r = ModelRouter(ForgeConfig(nodes=[NodeConfig(name="blade", url="http://127.0.0.1:11434")],
-                                models=[ModelConfig(id="qwen3:8b", node="blade", capabilities=["tool_calling"], ctx=4096)]))
+                                models=[ModelConfig(id=model, node="blade", capabilities=["tool_calling"], ctx=4096)]))
     tools = [{"type": "function", "function": {"name": "get_weather", "description": "weather for a city",
                                                "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}]
     res = await r.generate("tool_calling", [{"role": "user", "content": "What's the weather in Melbourne?"}], tools=tools)

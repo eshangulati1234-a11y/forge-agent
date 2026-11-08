@@ -94,6 +94,73 @@ def test_budget_pause_excludes_approval_wait():
     assert b.exceeded() is None
 
 
+async def _fake_summary(capability, messages, **kw):
+    assert capability == "extraction" and "USER: find AI jobs" in messages[1]["content"]
+    return GenResult(content="Goal: AI jobs in Melbourne. Saved 3 to linkedin_jobs.", tool_calls=[], model="fake", node="x")
+
+
+def _chat(agent, sid, turns: int) -> None:
+    for i in range(turns):
+        agent._save(sid, "user", "find AI jobs" if i == 0 else f"next {i}")
+        agent._save(sid, "assistant", "", tool_calls=[{"name": "browser__read", "arguments": {"url": f"u{i}"}}])
+        agent._save(sid, "tool", "x" * 3000, tool_name="browser.read")
+        agent._save(sid, "assistant", f"answer {i}")
+
+
+async def test_compact_folds_old_messages_into_a_summary_the_model_sees(services, monkeypatch):
+    agent = Agent(services)
+    sid = agent.new_session()
+    _chat(agent, sid, 10)
+    before = agent.context_info(sid)
+    assert before["history_messages"] == 40 and before["dropped_messages"] > 0 and before["can_compact"]
+    assert before["used"] is None and 5000 < before["estimate"] < 12000 and before["window"] == services.router.candidates("tool_calling")[0].ctx
+
+    monkeypatch.setattr(services.router, "generate", _fake_summary)
+    out = await agent.compact(sid)
+    assert out["compacted"] == 35 and out["history_tokens_after"] < out["history_tokens_before"]
+    after = agent.context_info(sid)
+    assert after["history_messages"] == 5 and after["dropped_messages"] == 0 and after["summary"]
+    assert after["compacted_messages"] == 35
+    assert "Saved 3 to linkedin_jobs" in agent._system(sid)
+    assert [m["content"] for m in agent._context(sid, 5000)][0] == "answer 8"   # cut moved past the tool result
+    assert len(agent.history(sid)) == 41                                       # nothing deleted; transcript intact
+
+
+async def test_second_compact_folds_the_previous_summary(services, monkeypatch):
+    agent = Agent(services)
+    sid = agent.new_session()
+    _chat(agent, sid, 4)
+    monkeypatch.setattr(services.router, "generate", _fake_summary)
+    await agent.compact(sid)
+    _chat(agent, sid, 3)
+    seen = {}
+
+    async def second(capability, messages, **kw):
+        seen["text"] = messages[1]["content"]
+        return GenResult(content="merged summary", tool_calls=[], model="fake", node="x")
+
+    monkeypatch.setattr(services.router, "generate", second)
+    await agent.compact(sid)
+    assert seen["text"].startswith("EARLIER SUMMARY: Goal: AI jobs")
+    assert agent._summary(sid) == "merged summary"
+    assert services.db.one("SELECT COUNT(*) n FROM messages WHERE session_id=? AND role='summary' AND compacted=0", (sid,))["n"] == 1
+
+
+async def test_compact_with_short_history_does_nothing(services):
+    agent = Agent(services)
+    sid = agent.new_session()
+    _chat(agent, sid, 1)
+    assert (await agent.compact(sid))["compacted"] == 0
+
+
+async def test_turn_records_context_usage(services):
+    agent, _ = _agent(services, [], prompt_tokens=7000)
+    sid = agent.new_session()
+    await agent.run_turn(sid, "hello")
+    info = agent.context_info(sid)
+    assert info["model"] == "fake" and info["used"] == 7020 and info["remaining"] == 16384 - 7020
+
+
 def test_job_application_on_the_web_gets_no_desktop_tools(services):
     agent = Agent(services)
     web = {t.name for t in agent._tools_for("s", "fill in the job application on jobs.ashbyhq.com with my details")}
