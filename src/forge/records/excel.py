@@ -40,6 +40,67 @@ HEADER_FONT = Font(bold=True, color="FFFFFF")
 STATUS_COLORS = {"Offer": "C6EFCE", "Interview": "FFEB9C", "Rejected": "FFC7CE", "Submitted": "DDEBF7", "Withdrawn": "EDEDED"}
 
 
+def create_workbook(path: Path, sheet: str, headers: list[str], rows: list[list[Any]]) -> dict:
+    """Create a new workbook independently of installed desktop applications."""
+    path = path.expanduser()
+    if path.suffix.lower() != ".xlsx":
+        raise InvalidInput("excel.create requires an .xlsx path")
+    if path.exists():
+        raise InvalidInput("Workbook already exists; use excel.write_cells to edit it or choose a new filename")
+    if not sheet or len(sheet) > 31 or any(c in sheet for c in r"\/*?:[]"):
+        raise InvalidInput("invalid Excel sheet name")
+    if not headers or len(headers) > 16384 or len(rows) > 1048575:
+        raise InvalidInput("headers and rows must fit within Excel's worksheet limits")
+    if any(len(row) != len(headers) for row in rows):
+        raise InvalidInput("each row must have the same number of cells as headers")
+    if any(not isinstance(v, (str, int, float, bool, type(None))) for row in rows for v in row):
+        raise InvalidInput("cells must contain text, numbers, booleans, or null")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet
+    # Scraped text is literal data, including strings beginning with '='.
+    for r, values in enumerate([headers, *rows], 1):
+        for c, value in enumerate(values, 1):
+            cell = ws.cell(r, c, value)
+            if isinstance(value, str):
+                cell.data_type = "s"
+    for cell in ws[1]:
+        cell.fill, cell.font = HEADER_FILL, HEADER_FONT
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = min(60, max(14, max(len(str(c.value or "")) for c in col) + 2))
+    with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".xlsx", delete=False) as f:
+        temp = Path(f.name)
+    created = False
+    try:
+        wb.save(temp)
+        check = load_workbook(temp, read_only=True, data_only=False)
+        try:
+            actual = list(check[sheet].iter_rows(values_only=True))
+            expected = [tuple(_norm_val(v) for v in row) for row in [headers, *rows]]
+            if actual != expected:
+                raise InvalidInput("workbook read-back verification failed")
+        finally:
+            check.close()
+        # Exclusive creation protects an existing workbook, including one created during verification.
+        with path.open("xb") as dest:
+            created = True
+            with temp.open("rb") as source:
+                shutil.copyfileobj(source, dest)
+    except FileExistsError:
+        raise InvalidInput("Workbook already exists; choose a new filename") from None
+    except BaseException:
+        if created:
+            path.unlink(missing_ok=True)
+        raise
+    finally:
+        wb.close()
+        temp.unlink(missing_ok=True)
+    return {"path": str(path), "sheet": sheet, "rows": len(rows), "columns": len(headers), "verified": True}
+
+
 def lock_file(path: Path) -> Path:
     return path.with_name("~$" + path.name)
 

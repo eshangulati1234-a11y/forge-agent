@@ -4,7 +4,6 @@ reported as `method="input"` so benchmarks can count how often the fallback was 
 """
 from __future__ import annotations
 
-import subprocess
 import time
 from dataclasses import dataclass
 
@@ -105,8 +104,9 @@ def hotkey(window_re: str, keys: str) -> ActionResult:
 
 
 def open_app(command: str, window_re: str, timeout: float = 15) -> dict:
+    from forge.desktop.launch import launch_app
     t0 = time.time()
-    subprocess.Popen(command, shell=False)
+    launch_app(command)
     w = find_window(window_re, timeout=timeout)
     return {"window": w.window_text(), "ms": round((time.time() - t0) * 1000)}
 

@@ -7,6 +7,10 @@ RTX GPUs, with no cloud inference.
 - Deterministic by default: deployed workflows call models only at explicit `llm` / `decide` steps.
 - **Laya** (non-autoregressive System 1) for fast, grounded decisions; a local LLM (System 2) when Laya isn't sure.
 - Windows desktop (UI Automation), browser (Playwright), Excel-backed records, MCP tools, self-built pure-compute tools.
+`excel.create` builds a new verified `.xlsx` from headers and rows without opening Excel, and `excel.open` launches
+it in Microsoft Excel using Windows application registration when Office is not on PATH. Existing files are never
+overwritten by `excel.create`.
+
 - Default-deny permissions, approvals bound to exact actions, emergency stop, hash-chained audit log.
 - A terminal UI that works over SSH; closing it never stops anything.
 
