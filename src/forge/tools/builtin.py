@@ -347,7 +347,8 @@ class ToolSearch(BaseModel):
 
 @tool("tools.search", ToolSearch, description="Find available tools by keyword (dynamic tool discovery)")
 def tools_search(a: ToolSearch, ctx: ToolContext):
-    return {"tools": [{"name": t.name, "description": t.description, "side_effect": str(t.side_effect)}
+    return {"tools": [{"name": t.name, "description": t.description, "side_effect": str(t.side_effect),
+                        "input_schema": t.json_schema()}
                       for t in ctx.services.registry.search(a.query, 12)]}
 
 

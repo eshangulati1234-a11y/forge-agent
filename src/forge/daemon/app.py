@@ -338,7 +338,7 @@ async def chat(sid: str, b: ChatBody):
 
 
 @app.post("/sessions/{sid}/interrupt", dependencies=[Depends(auth)])
-def interrupt(sid: str):
+async def interrupt(sid: str):
     AGENT.interrupt(sid)
     return {"interrupted": True}
 

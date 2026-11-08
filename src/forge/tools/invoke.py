@@ -33,7 +33,7 @@ async def invoke_tool(services, name: str, raw_args: dict, perms: Permissions, c
         raise InvalidInput(f"invalid arguments for {spec.name}", errors=errs, schema=spec.json_schema()) from None
 
     scope = scope or ({"run_id": ctx.run_id, "workflow_id": ctx.workflow_id, "step": ctx.step_path} if ctx.run_id
-                      else {"session_id": ctx.session_id})
+                      else {"session_id": ctx.extra.get("grant_session") or ctx.session_id})
     try:
         services.policy.check(spec, args, perms, scope=scope, interactive=interactive, dry_run=ctx.dry_run)
     except ForgeError as e:
@@ -49,6 +49,10 @@ async def invoke_tool(services, name: str, raw_args: dict, perms: Permissions, c
                 result = await asyncio.wait_for(spec.call(args, ctx), timeout_s)
         else:
             result = await asyncio.wait_for(spec.call(args, ctx), timeout_s)
+    except asyncio.CancelledError:
+        _record(services, call_id, ctx, spec.name, raw_args, "cancelled", None, "interrupted", "cancelled", started)
+        ctx.emit("tool.cancelled", tool=spec.name, call_id=call_id)
+        raise
     except Exception as e:
         cls = classify(e)
         _record(services, call_id, ctx, spec.name, raw_args, "error", None, f"{type(e).__name__}: {e}", str(cls), started)
