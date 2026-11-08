@@ -7,7 +7,7 @@ from datetime import datetime
 
 from rich.syntax import Syntax
 from rich.text import Text
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -19,9 +19,9 @@ from forge.client import ClientError
 from forge.tui.commands import COMMANDS, KEYS
 
 MODAL_CSS = """
-ModalScreen { align: center middle; }
-.modal { width: 92%; height: 88%; border: thick $accent; background: $panel; padding: 0 1; }
-.modal-title { text-style: bold; color: $accent; height: 1; }
+_Base { align: center middle; }
+.modal { width: 92%; height: 88%; border: solid $secondary; background: $background; padding: 0 1; }
+.modal-title { text-style: bold; color: $foreground; height: auto; margin-bottom: 1; }
 .hint { color: $text-muted; height: auto; }
 .err { color: $error; height: auto; }
 .ok { color: $success; height: auto; }
@@ -60,7 +60,7 @@ class SettingsScreen(_Base):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal"):
-            yield Label("Settings  ·  ↑↓ choose · Enter edit · Space toggles booleans · Ctrl+R reload file · Esc close", classes="modal-title")
+            yield Label("Settings  ·  Enter edit · Space toggle · Esc close", classes="modal-title")
             with Horizontal():
                 yield OptionList(id="sections")
                 with Vertical():
@@ -70,7 +70,7 @@ class SettingsScreen(_Base):
                     yield Static("", id="msg")
 
     async def on_mount(self) -> None:
-        self.query_one("#sections", OptionList).styles.width = 26
+        self.query_one("#sections", OptionList).styles.width = 18 if self.size.width < 100 else 26
         self.query_one("#settings_t", DataTable).add_columns("setting", "value", "applies")
         await self.load()
 
@@ -163,7 +163,7 @@ class ModelsScreen(_Base):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal"):
-            yield Label("Models  ·  left: capability · right: models · Enter pins model to capability · u unpin · p pull · Esc", classes="modal-title")
+            yield Label("Models  ·  Enter pin · u unpin · p pull · Esc close", classes="modal-title")
             with Horizontal():
                 yield OptionList(id="caps")
                 yield DataTable(id="models_t", cursor_type="row")
@@ -171,7 +171,7 @@ class ModelsScreen(_Base):
             yield Static("", id="msg")
 
     async def on_mount(self) -> None:
-        self.query_one("#caps", OptionList).styles.width = 30
+        self.query_one("#caps", OptionList).styles.width = 18 if self.size.width < 100 else 30
         self.query_one("#models_t", DataTable).add_columns("node", "model", "size", "params", "quant", "resident", "capabilities")
         self.query_one("#pull", Input).display = False
         await self.load()
@@ -242,7 +242,7 @@ class ModelsScreen(_Base):
 class ToolsScreen(_Base):
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal"):
-            yield Label("Tools  ·  Space/Enter toggles enabled · type to filter · Esc close", classes="modal-title")
+            yield Label("Tools  ·  Enter toggle · type to filter · Esc close", classes="modal-title")
             yield Input(placeholder="filter", id="filter")
             yield DataTable(id="tools_t", cursor_type="row")
             yield Static("", id="msg")
@@ -355,7 +355,7 @@ class ApprovalScreen(_Base):
         kind = self.ap.get("kind")
         with Vertical(classes="modal"):
             yield Label(f"⚠ Approval needed  ·  a approve · d deny · Esc decide later (F4)", classes="modal-title")
-            yield Static(Text.assemble((self.ap["title"], "bold yellow"), f"\n{kind} · requested by {self.ap.get('requested_by')} · "
+            yield Static(Text.assemble((self.ap["title"], "bold"), f"\n{kind} · requested by {self.ap.get('requested_by')} · "
                                        f"expires {ts(self.ap.get('expires_at'))}"))
             if kind == "deploy":
                 diff = subj.get("permission_diff", {})
@@ -426,7 +426,7 @@ class WorkScreen(_Base):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal"):
-            yield Label("Live work  ·  refreshes every 2s · x cancel selected run · Esc close", classes="modal-title")
+            yield Label("Work  ·  x cancel run · Esc close", classes="modal-title")
             yield Static("", id="summary")
             yield DataTable(id="work_runs", cursor_type="row")
             yield Label("waiting on you", classes="hint")
@@ -481,9 +481,18 @@ class HelpScreen(_Base):
             if c.category != cat:
                 cat = c.category
                 t.append(f"\n{cat}\n", style="bold underline")
-            t.append(f"  /{c.name}", style="bold cyan")
+            t.append(f"  /{c.name}", style="bold")
             t.append(f" {c.args}" if c.args else "", style="dim")
             t.append(f"\n      {c.description}\n")
+        t.append("\nTools / functions\n", style="bold underline")
+        tools = getattr(self.app, "tools", [])
+        if not tools:
+            t.append("  No tools available\n", style="dim")
+        for tool in sorted(tools, key=lambda x: x["name"]):
+            status = "enabled" if tool.get("enabled") else "disabled"
+            t.append(f"  {tool['name']}", style="bold")
+            t.append(f"  [{status}]\n", style="dim")
+            t.append(f"      {tool.get('description', '')}\n")
         t.append("\nKeys\n", style="bold underline")
         for k, d in KEYS:
             t.append(f"  {k:<22}", style="bold")

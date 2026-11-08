@@ -67,9 +67,10 @@ class RoutingConfig(BaseModel):
 
 
 class TuiConfig(BaseModel):
-    theme: str = "textual-dark"
+    theme: str = "forge-black"
     show_timeline: bool = True
     bell_on_approval: bool = True
+    animations: bool = True
 
 
 class BrowserConfig(BaseModel):

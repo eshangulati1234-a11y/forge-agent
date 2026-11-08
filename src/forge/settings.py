@@ -49,7 +49,8 @@ DESCRIPTIONS = {
     "routing.pins": "Force a model for a capability, e.g. {\"reasoning\": \"qwen3:8b\"}.",
     "tools.disabled": "Tool globs switched off for the agent and all workflows, e.g. [\"desktop.*\"].",
     "tui.theme": "Textual theme name.",
-    "tui.show_timeline": "Show the tool timeline beside the chat.",
+    "tui.show_timeline": "Show concise tool activity in the conversation.",
+    "tui.animations": "Animate the working indicator and rotate thinking words.",
     "tui.bell_on_approval": "Ring the terminal bell when an approval is needed.",
     "browser.executable": "Chromium-based browser to drive, e.g. C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe (empty = Playwright's Chromium).",
     "workspace": "Folder the agent may write to in chat sessions (empty = ~/.forge/workspace).",
@@ -60,7 +61,7 @@ DESCRIPTIONS = {
     "setup.profile": "Hardware profile chosen in `forge setup`.",
 }
 CHOICES = {"laya.checkpoint": ["english", "multilingual", "typed-decisions"],
-           "tui.theme": ["textual-dark", "textual-light", "nord", "gruvbox", "tokyo-night", "monokai", "dracula",
+           "tui.theme": ["forge-black", "textual-dark", "textual-light", "nord", "gruvbox", "tokyo-night", "monokai", "dracula",
                          "catppuccin-mocha", "solarized-light"]}
 
 

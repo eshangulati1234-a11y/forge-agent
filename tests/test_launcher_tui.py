@@ -55,12 +55,12 @@ async def test_tui_autocomplete_settings_approval_work(daemon):
     app = ForgeTUI()
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause(1.5)
-        assert "▶" in str(app.query_one("#status").render())             # status bar rendered from /status
+        assert "Forge" in str(app.query_one("#status").render())
         # floating slash autocomplete
         await pilot.press("slash", "s", "e")
         await pilot.pause(0.3)
         sug = app.query_one("#suggest", OptionList)
-        assert sug.display and {sug.get_option_at_index(i).id for i in range(sug.option_count)} >= {"settings", "sessions", "set"}
+        assert sug.display and {sug.get_option_at_index(i).id for i in range(sug.option_count)} >= {"command:settings", "command:sessions", "command:set"}
         await pilot.press("ctrl+c")                                         # clears the draft
         assert app.query_one("#composer").text == ""
         # settings overlay: edit a live setting through the UI
