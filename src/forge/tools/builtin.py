@@ -250,6 +250,31 @@ class ExcelPath(BaseModel):
     path: str
 
 
+class ExcelCreate(BaseModel):
+    path: str
+    sheet: str = Field("Jobs", min_length=1, max_length=31)
+    headers: list[str] = Field(min_length=1)
+    rows: list[list[Any]] = Field(default_factory=list, description="Data rows in the same column order as headers")
+
+
+@tool("excel.create", ExcelCreate, description="Create a new formatted .xlsx spreadsheet from headers and rows; works without Excel running. Refuses to overwrite files",
+      side_effect=SideEffect.LOCAL_WRITE, caps={"fs.write"}, path_fields=("path",),
+      mock=lambda a, ctx: {"dry_run": True, "rows": len(a.rows)})
+def excel_create(a: ExcelCreate, ctx: ToolContext):
+    return xl.create_workbook(Path(a.path), a.sheet, a.headers, a.rows)
+
+
+@tool("excel.open", ExcelPath, description="Open an existing .xlsx file in Microsoft Excel (finds Office even when excel.exe is not on PATH)",
+      side_effect=SideEffect.LOCAL_WRITE, caps={"desktop", "fs.read"}, path_fields=("path",), resource="desktop",
+      mock=lambda a, ctx: {"dry_run": True, "path": a.path})
+async def excel_open(a: ExcelPath, ctx: ToolContext):
+    import asyncio
+    from forge.desktop.launch import open_workbook
+    from forge.desktop.tools import LEASE, _attended
+    async with LEASE.hold(ctx.run_id or ctx.session_id or "agent", attended=_attended(ctx)):
+        return await asyncio.to_thread(open_workbook, Path(a.path))
+
+
 @tool("excel.inspect", ExcelPath, description="Describe a workbook: sheets, headers, tables, formulas, validations, charts",
       caps={"fs.read"}, path_fields=("path",))
 def excel_inspect(a: ExcelPath, ctx: ToolContext):

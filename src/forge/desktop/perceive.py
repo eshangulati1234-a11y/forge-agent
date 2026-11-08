@@ -102,11 +102,13 @@ def list_windows() -> list[dict]:
 
 def find_window(title_re: str, timeout: float = 5.0):
     from pywinauto import Desktop
+    pattern = re.compile(title_re)
     end = time.time() + timeout
     last = None
     while time.time() < end:
         try:
-            w = Desktop(backend="uia").window(title_re=title_re, visible_only=True, found_index=0)
+            w = Desktop(backend="uia").window(predicate_func=lambda element: bool(pattern.search(element.name or "")),
+                                               visible_only=True, found_index=0)
             w.wait("exists", timeout=0.5)
             return w   # WindowSpecification: supports child_window(); attribute access resolves the wrapper
         except Exception as e:
