@@ -108,11 +108,15 @@ class Agent:
         self.s.db.execute("INSERT INTO sessions(id,title,status,created_at,updated_at) VALUES(?,?,?,?,?)", (sid, title, "idle", now(), now()))
         return sid
 
-    def sessions(self, limit: int = 30) -> list[dict]:
-        return self.s.db.all("SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,))
+    def sessions(self, limit: int = 30, offset: int = 0, q: str = "") -> list[dict]:
+        return self.s.db.all("SELECT * FROM sessions WHERE instr(lower(title), lower(?)) > 0 "
+                             "OR instr(lower(id), lower(?)) > 0 ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?",
+                             (q, q, limit, offset))
 
-    def history(self, sid: str, limit: int = 200) -> list[dict]:
-        return self.s.db.all("SELECT * FROM (SELECT * FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?) ORDER BY id", (sid, limit))
+    def history(self, sid: str, limit: int = 200, before_id: int | None = None) -> list[dict]:
+        return self.s.db.all("SELECT * FROM (SELECT * FROM messages WHERE session_id=? "
+                             "AND (? IS NULL OR id < ?) ORDER BY id DESC LIMIT ?) ORDER BY id",
+                             (sid, before_id, before_id, limit))
 
     def _save(self, sid: str, role: str, content: str, tool_calls: list | None = None, tool_name: str | None = None) -> None:
         self.s.db.execute("INSERT INTO messages(session_id,role,content,tool_calls_json,tool_name,created_at) VALUES(?,?,?,?,?,?)",

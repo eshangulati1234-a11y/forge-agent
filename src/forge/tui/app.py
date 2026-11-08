@@ -244,8 +244,8 @@ class ForgeTUI(App):
 
     async def load_session(self, sid: str) -> None:
         # Fetch before switching so a missing session or network error leaves the current chat intact.
-        s = next((x for x in await self.c.get("/sessions") if x["id"] == sid), None) or {}
-        messages = await self.c.get(f"/sessions/{sid}/messages", limit=200)
+        from forge.client import read_chat
+        s, messages = await read_chat(self.c, sid)
         self.query_one("#composer", Composer).set_prompt_history([m["content"] for m in messages if m["role"] == "user"])
         self.session_id = sid
         self.queue.clear()
@@ -663,6 +663,14 @@ class ForgeTUI(App):
             self.action_tab(cmd)
         elif cmd in ("settings", "work", "sessions", "tools", "doctor", "help"):
             self.action_open(cmd)
+        elif cmd in ("history", "resume"):
+            if cmd == "resume" and rest:
+                rows = await self.c.get("/sessions", q=rest, limit=2)
+                exact = next((s for s in rows if s["id"] == rest), None)
+                if exact or len(rows) == 1:
+                    await self.load_session((exact or rows[0])["id"])
+                    return
+            self.push_screen(screens.SessionsScreen(search=rest), self._session_chosen)
         elif cmd == "model":
             self.action_open("models")
         elif cmd == "new":
@@ -766,8 +774,8 @@ class ForgeTUI(App):
         elif cmd == "stop":
             await self.c.post("/stop")
             await self.refresh_status()
-            self.notify("EMERGENCY STOP engaged. /resume to clear.", severity="error", timeout=10)
-        elif cmd == "resume":
+            self.notify("EMERGENCY STOP engaged. /unstop to clear.", severity="error", timeout=10)
+        elif cmd == "unstop":
             await self.c.post("/resume")
             await self.refresh_status()
         elif cmd == "quit":
@@ -792,7 +800,7 @@ class ForgeTUI(App):
         if time.time() - self._estop_armed < 3:
             await self.c.post("/stop")
             await self.refresh_status()
-            self.notify("EMERGENCY STOP engaged. /resume to clear.", severity="error", timeout=10)
+            self.notify("EMERGENCY STOP engaged. /unstop to clear.", severity="error", timeout=10)
         else:
             self._estop_armed = time.time()
             self.notify("Press Ctrl+E again within 3s to EMERGENCY STOP", severity="warning")
