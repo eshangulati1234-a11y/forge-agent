@@ -174,7 +174,7 @@ class ActivityIndicator(Static):
         active = state in self.ACTIVE
         labels = {"ready": "Ready", "responding": "Responding…", "approval": "Waiting for approval",
                   "interrupted": "Interrupted", "offline": "Connection lost · reconnecting…",
-                  "stopped": "Emergency stop · /resume to continue", "error": "Something went wrong", "interrupting": "Stopping…"}
+                  "stopped": "Emergency stop · /unstop to continue", "error": "Something went wrong", "interrupting": "Stopping…"}
         if state == "thinking":
             word = self.WORDS[int(elapsed // 4) % len(self.WORDS)] if self.animations else "Thinking"
             label = word + "…"
