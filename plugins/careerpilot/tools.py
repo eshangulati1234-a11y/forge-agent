@@ -159,3 +159,60 @@ def to_record(a: ToRecord, ctx: ToolContext):
                        "suitability_level": a.score.get("level"), "eligibility": elig,
                        "experience_flag": ">2y experience asked" if needs_exp else "",
                        "notes": f"scored by System {a.score.get('system')}; posted {j.get('posted', '')}"}}
+
+
+# Work-rights answers must rest on a real sentence from the posting. The first live run had visa="No" justified by
+# "A Paypal account to receive payment", and "Likely" justified by "Based in an English-speaking country".
+RIGHTS_TERMS = {
+    "visa_sponsorship": re.compile(r"\b(visa|sponsor\w*)\b", re.I),
+    "intl_no": re.compile(r"\b(citizen\w*|permanent residen\w*|PR|clearance|nv1|nv2|baseline|(full|unrestricted|valid|existing)\s+(working|work) rights"
+                          r"|right to work|work(ing)? rights|eligib\w+ to work)\b", re.I),
+    "intl_yes": re.compile(r"\b(international students?|student visa|visa holders?|subclass 500|graduate visa|485)\b", re.I),
+}
+PART_TIME = re.compile(r"\b(part[- ]time|casual|intern(ship)?|vacation(er)? program|student role)\b", re.I)
+
+
+def _norm_text(s: str) -> str:
+    return re.sub(r"\W+", " ", s or "").strip().lower()
+
+
+class CheckLinkedInJob(BaseModel):
+    job: dict[str, Any] = Field(description="output of the extraction step")
+    page_text: str = Field(description="the posting text the extraction was made from")
+    url: str
+    collection: str = "linkedin_jobs"
+
+
+@tool("careerpilot.check_linkedin_job", CheckLinkedInJob,
+      description="Deterministic checks on an extracted LinkedIn job: work-rights answers need verbatim, relevant evidence; "
+                  "flags duplicates (same company + title already tracked under another link)", source="plugin:careerpilot")
+def check_linkedin_job(a: CheckLinkedInJob, ctx: ToolContext):
+    j = dict(a.job)
+    notes = []
+    ev = (j.get("work_rights_evidence") or "").strip()
+    ev_real = bool(ev) and _norm_text(ev)[:120] in _norm_text(a.page_text)
+    if ev and not ev_real:
+        notes.append(f"evidence not found in the posting: {ev[:80]!r}")
+    visa, intl = j.get("visa_sponsorship"), j.get("international_students_accepted")
+    if visa in ("Yes", "No") and not (ev_real and RIGHTS_TERMS["visa_sponsorship"].search(ev)):
+        notes.append(f"visa_sponsorship {visa} -> Not stated (evidence doesn't mention visas/sponsorship)")
+        visa = "Not stated"
+    if intl == "No" and not (ev_real and RIGHTS_TERMS["intl_no"].search(ev)):
+        notes.append("international_students_accepted No -> Not stated (evidence doesn't mention citizenship/PR/work rights)")
+        intl = "Not stated"
+    if intl == "Yes" and not (ev_real and RIGHTS_TERMS["intl_yes"].search(ev)):
+        notes.append("international_students_accepted Yes -> Not stated (evidence doesn't mention international students/visas)")
+        intl = "Not stated"
+    if intl == "Likely" and not PART_TIME.search(f"{j.get('job_title', '')} {a.page_text}"):
+        notes.append("international_students_accepted Likely -> Not stated (not a part-time/casual/internship role)")
+        intl = "Not stated"
+    relevant = ev_real and any(t.search(ev) for t in RIGHTS_TERMS.values())
+    if ev_real and not relevant:
+        notes.append(f"evidence dropped, not about work rights: {ev[:80]!r}")
+    j.update(visa_sponsorship=visa, international_students_accepted=intl, work_rights_evidence=ev if relevant else "")
+    j["priority"] = 1 if visa == "Yes" else 2 if intl in ("Yes", "Likely") else 3
+
+    key = (_norm_text(j.get("company")), _norm_text(j.get("job_title")))
+    dup = next((r for r in ctx.services.records.list(a.collection)
+                if (_norm_text(r.get("company")), _norm_text(r.get("job_title"))) == key and r.get("apply_link") != a.url), None)
+    return {"job": j, "duplicate_of": dup["id"] if dup else None, "notes": notes}

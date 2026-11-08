@@ -5,3 +5,4 @@ collections: collections.yaml
 tools: tools.py
 workflows:
   - job_watch.yaml
+  - linkedin_ai_jobs.yaml
