@@ -43,6 +43,16 @@ PROFILES: dict[str, Profile] = {p.name: p for p in [
         {"id": "qwen3:4b", "capabilities": ["reasoning", "tool_calling", "extraction", "fast"], "ctx": 8192, "vram_mb": 3200, "quality": 2},
         {"id": "qwen3-embedding:0.6b", "capabilities": ["embedding"], "ctx": 8192, "vram_mb": 700, "quality": 2},
     ], notes="UNVERIFIED: Ollama tool calling and real VRAM use of qwen3.5:9b not measured yet."),
+    Profile("apple-silicon", "Apple Silicon Mac, 12 GB+ unified memory", "experimental", 8000, [
+        {"id": "qwen3:8b", "capabilities": S1, "ctx": 16384, "vram_mb": 6400, "quality": 3},
+        {"id": "qwen3:4b", "capabilities": ["reasoning", "tool_calling", "extraction", "fast"], "ctx": 8192, "vram_mb": 3200, "quality": 2},
+        {"id": "qwen2.5vl:7b", "capabilities": ["vision"], "ctx": 8192, "vram_mb": 6200, "quality": 3},
+        {"id": "qwen3-embedding:0.6b", "capabilities": ["embedding"], "ctx": 8192, "vram_mb": 700, "quality": 2},
+    ], notes="Runs through Ollama's Metal backend. Same models as the verified NVIDIA profiles; not benchmarked on a Mac yet."),
+    Profile("apple-silicon-small", "Apple Silicon Mac, under 12 GB unified memory", "experimental", 0, [
+        {"id": "qwen3:4b", "capabilities": S1 + ["fast"], "ctx": 8192, "vram_mb": 3200, "quality": 2},
+        {"id": "qwen3-embedding:0.6b", "capabilities": ["embedding"], "ctx": 8192, "vram_mb": 700, "quality": 2},
+    ], notes="Small model only so the Mac stays responsive; no vision model."),
     Profile("cpu-only", "No NVIDIA GPU (slow)", "experimental", 0, [
         {"id": "qwen3:4b", "capabilities": S1 + ["fast"], "ctx": 8192, "vram_mb": 0, "quality": 2},
         {"id": "qwen3-embedding:0.6b", "capabilities": ["embedding"], "ctx": 8192, "vram_mb": 0, "quality": 2},
@@ -50,7 +60,9 @@ PROFILES: dict[str, Profile] = {p.name: p for p in [
 ]}
 
 
-def recommend(max_vram_mb: int) -> Profile:
+def recommend(max_vram_mb: int, apple_silicon: bool = False) -> Profile:
+    if apple_silicon:
+        return PROFILES["apple-silicon"] if max_vram_mb >= PROFILES["apple-silicon"].min_vram_mb else PROFILES["apple-silicon-small"]
     if max_vram_mb >= PROFILES["gpu-12gb"].min_vram_mb:
         return PROFILES["gpu-12gb"]
     if max_vram_mb >= PROFILES["gpu-8gb"].min_vram_mb:

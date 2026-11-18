@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from forge._plat import win_flags
 from forge.desktop import execute as ex
 from forge.desktop.loop import DesktopAgent
 from forge.desktop.perceive import Observation, Selector, find_window
@@ -78,7 +79,7 @@ def _form_launch(title: str) -> Callable[[], dict]:
         out = Path(tempfile.mkdtemp()) / "form.json"
         env = {**os.environ, "FORGE_FORM_OUT": str(out)}
         p = subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(FORM_PS1), "-Title", title],
-                             env=env, creationflags=0x08000000)
+                             env=env, **win_flags())
         find_window(title, timeout=20)
         time.sleep(0.5)
         return {"proc": p, "out": out}
@@ -154,7 +155,7 @@ class GpuSampler(threading.Thread):
         while not self._stop.is_set():
             try:
                 out = subprocess.run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"], capture_output=True,
-                                     text=True, timeout=3, creationflags=0x08000000).stdout
+                                     text=True, timeout=3, **win_flags()).stdout
                 self.peak = max(self.peak, int(out.strip()))
             except Exception:
                 pass

@@ -465,6 +465,17 @@ class ForgeTUI(App):
             self.set_state(f"tool:{next(iter(self.active_tools.values()))}" if self.active_tools else "thinking")
         elif mine and k == "agent.waiting_approval":
             self.set_state("approval")
+        elif mine and k == "agent.waiting_user":
+            what = "log in" if ev.get("wait_kind") == "login" else "complete the check"
+            self.timeline(f"[yellow]●[/yellow] Waiting for you: {what} in the Forge browser window. "
+                          "[dim]Forge continues automatically when you are through (Ctrl+C to stop waiting).[/dim]")
+            self.set_state("needs_you")
+            if self.bell_on_approval:
+                self.bell()
+        elif mine and k == "agent.resumed":
+            if ev.get("cleared"):
+                self.timeline("[green]●[/green] Thanks, continuing…")
+            self.set_state("thinking")
         elif mine and k == "agent.done":
             final = ev.get("text", "")
             if final and not self._turn_message:

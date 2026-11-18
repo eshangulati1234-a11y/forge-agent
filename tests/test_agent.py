@@ -1,5 +1,9 @@
 """Agent harness: tool exposure, token accounting, no-progress stop, subagent grants. A scripted router stands in
 for the model so these run offline and deterministically."""
+import sys
+
+import pytest
+
 from forge.agent.loop import STREAK_NUDGE, STREAK_STOP, Agent, Budget
 from forge.config import ModelConfig
 from forge.models.router import GenResult
@@ -161,9 +165,41 @@ async def test_turn_records_context_usage(services):
     assert info["model"] == "fake" and info["used"] == 7020 and info["remaining"] == 16384 - 7020
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="desktop tools need Windows UI Automation")
 def test_job_application_on_the_web_gets_no_desktop_tools(services):
     agent = Agent(services)
     web = {t.name for t in agent._tools_for("s", "fill in the job application on jobs.ashbyhq.com with my details")}
     assert "browser.act" in web and not any(n.startswith("desktop.") for n in web)
     desk = {t.name for t in agent._tools_for("s", "open the calculator, then read its window")}
     assert any(n.startswith("desktop.") for n in desk)
+
+
+async def test_challenge_waits_for_the_user_then_continues_without_counting_a_failure(services, monkeypatch):
+    agent, _ = _agent(services, [{"name": "test__gate", "arguments": {}}])
+    seen = []
+
+    async def cleared(ctx, e, timeout_s=600):
+        seen.append(e.kind)
+        return {"url": "https://example.test/after", "title": "Welcome"}
+
+    monkeypatch.setattr(agent, "_await_user_clear", cleared)
+    events = []
+    sid = agent.new_session()
+    final = await agent.run_turn(sid, "echo a gated page", budget=Budget(max_steps=5), emit=lambda e: events.append(e["kind"]))
+    assert final == "done" and seen == ["challenge"]
+    tool_msg = [m["content"] for m in agent.history(sid) if m["role"] == "tool"][0]
+    assert '"resumed_after_user": true' in tool_msg and "https://example.test/after" in tool_msg and '"error"' not in tool_msg
+    assert "agent.waiting_user" in events and "agent.resumed" in events
+
+
+async def test_challenge_timeout_tells_the_model_to_stop_and_ask(services, monkeypatch):
+    agent, _ = _agent(services, [{"name": "test__gate", "arguments": {}}])
+
+    async def never(ctx, e, timeout_s=600):
+        return None
+
+    monkeypatch.setattr(agent, "_await_user_clear", never)
+    sid = agent.new_session()
+    await agent.run_turn(sid, "echo a gated page", budget=Budget(max_steps=5))
+    tool_msg = [m["content"] for m in agent.history(sid) if m["role"] == "tool"][0]
+    assert "timed out waiting for the user" in tool_msg and "needs_user" in tool_msg

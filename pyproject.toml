@@ -22,7 +22,7 @@ dependencies = [
     "psutil>=7.2.2",
     "pydantic>=2.14.1",
     "pydantic-settings>=2.16.1",
-    "pywinauto>=0.6.9",
+    "pywinauto>=0.6.9; sys_platform == 'win32'",
     "pyyaml>=6.0.3",
     "sqlite-vec>=0.1.9",
     "textual>=8.2.8",
@@ -37,7 +37,7 @@ dependencies = [
 forge = "forge.cli:app"
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu126" }]
+torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
 
 [[tool.uv.index]]
 name = "pytorch-cu126"

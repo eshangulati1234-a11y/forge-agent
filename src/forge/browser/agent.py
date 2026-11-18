@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from forge.errors import InterfaceChanged, InvalidInput, NeedsUser, PermissionDenied
+from forge.errors import ChallengeRequired, InterfaceChanged, InvalidInput, NeedsUser, PermissionDenied
 from forge.policy.engine import host_allowed
 from forge.browser.visualize import CURSOR_JS
 from forge.browser.window import active_tab_titles, profile_pids, reveal
@@ -299,20 +299,26 @@ class BrowserManager:
         else:
             await d.dismiss()
 
-    async def check_challenge(self, page) -> dict:
+    async def _challenge_kind(self, page) -> str | None:
+        """'captcha' / 'verify' when a bot check is on screen, else None. Detection only; never interacts with the check."""
         # LinkedIn embeds an invisible reCAPTCHA Enterprise anchor on some job pages (silent scoring, no puzzle); counting
         # every provider frame paused runs on pages the user could read normally. Only a frame big enough to interact
         # with counts. Read from the DOM (src attribute), not page.frames: a just-inserted frame is still about:blank.
         frames = await page.evaluate(CHALLENGE_FRAMES_JS, list(CHALLENGE_FRAMES))
         if any(f["w"] >= 100 and f["h"] >= 60 for f in frames):
-            raise NeedsUser(f"{page.url} shows a CAPTCHA / bot challenge. Forge does not bypass these; please complete it or use an official API.")
+            return "captcha"
         try:
             body = (await page.inner_text("body", timeout=3000))[:5000]
         except Exception:
             body = ""
-        if CHALLENGE_RE.search(body):
-            raise NeedsUser(f"{page.url} asks to verify you are human. Forge does not bypass this.")
+        return "verify" if CHALLENGE_RE.search(body) else None
+
+    async def _login_state(self, page) -> dict:
         # Many public pages embed hidden sign-in forms. Even a visible optional form is not a login wall.
+        try:
+            body = (await page.inner_text("body", timeout=3000))[:5000]
+        except Exception:
+            body = ""
         login_form = await page.locator("input[type=password]:visible").count() > 0
         path = urlparse(page.url).path
         title = await page.title()
@@ -320,6 +326,49 @@ class BrowserManager:
                     re.search(r"\b(log in|sign in|login)\b", title, re.I) or
                     re.search(r"\b(sign in|log in|login) (is required|to (view|continue|access))\b", body, re.I))
         return {"login_required": login_form and gate, "login_form_present": login_form}
+
+    async def check_challenge(self, page) -> dict:
+        kind = await self._challenge_kind(page)
+        if kind == "captcha":
+            raise ChallengeRequired(f"{page.url} shows a CAPTCHA / bot challenge. Forge does not solve these; "
+                                    "complete it in the browser window (or use an official API).", kind="challenge", profile=self.current, url=page.url)
+        if kind == "verify":
+            raise ChallengeRequired(f"{page.url} asks to verify you are human. Forge does not solve this; "
+                                    "complete it in the browser window.", kind="challenge", profile=self.current, url=page.url)
+        return await self._login_state(page)
+
+    async def wait_until_clear(self, profile: str | None, kind: str, *, timeout_s: float = 600, poll_s: float = 1.0,
+                               on_tick=None) -> dict | None:
+        """Block until the user has cleared a challenge / login wall in the visible window, then return the page state.
+
+        Follows whichever tab is active (the user may have been sent to a new tab or redirected). Requires the page to
+        look clear on two consecutive polls so a transient redirect mid-solve doesn't resume the agent too early.
+        Returns None on timeout or if the browser window was closed."""
+        end = time.time() + timeout_s
+        clear_polls = 0
+        while time.time() < end:
+            await asyncio.sleep(poll_s)
+            try:
+                page = await self._active(profile)
+                if page is None or page.is_closed():
+                    return None
+                if kind == "login":
+                    blocked = bool((await self._login_state(page))["login_required"])
+                else:
+                    blocked = await self._challenge_kind(page) is not None
+            except Exception:       # mid-navigation evaluate errors are normal while the user is solving
+                clear_polls = 0
+                continue
+            clear_polls = 0 if blocked else clear_polls + 1
+            if clear_polls >= 2:
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except Exception:
+                    pass
+                return {"url": page.url, "title": await page.title()}
+            if on_tick:
+                on_tick()
+        return None
 
     async def open(self, url: str, profile: str | None, *, headless: bool | None = None,
                    allow_hosts: list[str] | None, new_tab: bool = False) -> dict:

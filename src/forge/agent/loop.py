@@ -26,7 +26,7 @@ from typing import Any, AsyncIterator
 from pydantic import BaseModel, Field
 
 from forge.db import canonical, new_id, now, sha
-from forge.errors import ForgeError, NeedsApproval, classify
+from forge.errors import ChallengeRequired, ForgeError, NeedsApproval, classify
 from forge.models.router import estimate_tokens
 from forge.policy.engine import session_permissions
 from forge.tools.invoke import invoke_tool
@@ -355,6 +355,20 @@ class Agent:
                     budget.pause(time.time() - t0)
                     if decision != "approved":
                         return call, json.dumps({"error": f"user {decision} this action", "error_class": "permission_denied"})
+                except ChallengeRequired as e:
+                    # The user clears the check in the visible browser window; we wait in place, then carry on from the
+                    # page they left us on. This is not a failure: it must not count toward the repeat-failure limit.
+                    ev("agent.waiting_user", reason=str(e), url=e.url, wait_kind=e.kind)
+                    t0 = time.time()
+                    state = await self._await_user_clear(ctx, e)
+                    budget.pause(time.time() - t0)
+                    ev("agent.resumed", url=(state or {}).get("url", e.url), cleared=state is not None)
+                    if state is None:
+                        return call, json.dumps({"error": f"timed out waiting for the user to complete the {e.kind} at {e.url}; "
+                                                          "stop and tell the user what is blocking you", "error_class": "needs_user"})
+                    note = ("The user completed the check; the page below is where they left it. Continue from here; "
+                            "do not repeat the action that triggered it.")
+                    return call, json.dumps({"ok": True, "resumed_after_user": True, "note": note, **state})
                 except Exception as e:
                     failures[key] = failures.get(key, 0) + 1
                     payload = {"error": str(e), "error_class": str(classify(e))}
@@ -365,6 +379,15 @@ class Agent:
         if parallel:
             return list(await asyncio.gather(*(one(c) for c in calls)))
         return [await one(c) for c in calls]
+
+    async def _await_user_clear(self, ctx: ToolContext, e: ChallengeRequired, timeout_s: float = 600) -> dict | None:
+        """Wait for the user to finish a CAPTCHA / login in the browser window. None if they never did (or closed it)."""
+        from forge.browser.tools import mgr
+        try:
+            return await mgr(ctx).wait_until_clear(e.profile, e.kind, timeout_s=timeout_s)
+        except Exception:
+            log.exception("waiting for the user failed")
+            return None
 
     async def _await_approval(self, approval_id: str, timeout_s: float = 900) -> str:
         t0 = time.time()

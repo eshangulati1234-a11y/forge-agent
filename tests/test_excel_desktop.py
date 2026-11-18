@@ -1,3 +1,4 @@
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +28,7 @@ def test_create_workbook_without_excel_and_never_overwrite(services, tmp_path):
         create_workbook(tmp_path / "bad.xlsx", "Jobs", ["Title"], [[1, 2]])
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="needs Windows desktop automation (pywinauto / UI Automation)")
 def test_office_registry_lookup_and_workbook_launch(monkeypatch, tmp_path):
     import winreg
     from forge.desktop import launch
@@ -51,6 +53,7 @@ def test_office_registry_lookup_and_workbook_launch(monkeypatch, tmp_path):
     assert result["launched"] and calls[0][0] == [str(executable), str(workbook)]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="needs Windows desktop automation (pywinauto / UI Automation)")
 def test_app_window_lookup_matches_title_suffix_and_respects_anchors(monkeypatch):
     import pywinauto
     from forge.desktop.perceive import find_window

@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from forge._plat import win_flags
 from forge.db import sha
 from forge.errors import ForgeError, InvalidInput
 from forge.tools.registry import SideEffect, ToolSpec, tool
@@ -79,6 +80,17 @@ def static_check(code: str) -> list[str]:
     return problems
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    if sys.platform != "win32":
+        import os
+        import signal
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+    proc.kill()
+
+
 def _job_limited(proc: subprocess.Popen) -> None:
     try:
         import win32api
@@ -98,21 +110,44 @@ def _job_limited(proc: subprocess.Popen) -> None:
         pass
 
 
+def _posix_limits():
+    """preexec_fn for macOS/Linux: the counterpart of the Windows job object. Runs in the child before exec."""
+    import resource
+
+    def apply() -> None:
+        def cap(res, soft, hard=None):
+            try:
+                resource.setrlimit(res, (soft, soft if hard is None else hard))
+            except (ValueError, OSError):
+                pass     # not every limit is supported on every OS (e.g. RLIMIT_AS on macOS)
+        cap(resource.RLIMIT_CPU, TIMEOUT_S + 5)
+        cap(resource.RLIMIT_AS, MEM_LIMIT_MB * 1024 * 1024)          # enforced on Linux; ignored by macOS
+        cap(resource.RLIMIT_FSIZE, 1024 * 1024)                     # generated tools never need to write files
+        cap(resource.RLIMIT_NOFILE, 32)
+        cap(resource.RLIMIT_CORE, 0)
+        if hasattr(resource, "RLIMIT_NPROC"):
+            cap(resource.RLIMIT_NPROC, 0)                           # the tool may not start child processes
+    return apply
+
+
 def run_isolated(module_path: Path, mode: str, payload: Any = None) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         runner = Path(tmp) / "runner.py"
         runner.write_text(RUNNER)
-        env = {"SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"), "PYTHONHASHSEED": "0"}   # stripped environment
+        env = {"PYTHONHASHSEED": "0"}
+        if sys.platform == "win32":
+            env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")   # stripped environment
         # The venv python.exe is a launcher that spawns a child, which the job's no-children limit forbids; run the base
         # interpreter directly. -I ignores site-packages and PYTHON* env vars, so only the stdlib is importable.
         exe = getattr(sys, "_base_executable", None) or sys.executable
         proc = subprocess.Popen([exe, "-I", str(runner), str(module_path), mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, cwd=tmp, env=env, text=True, creationflags=0x08000000)
+                                stderr=subprocess.PIPE, cwd=tmp, env=env, text=True, **win_flags(),
+                                **({} if sys.platform == "win32" else {"preexec_fn": _posix_limits(), "start_new_session": True}))
         _job_limited(proc)
         try:
             out, err = proc.communicate(json.dumps(payload or {}), timeout=TIMEOUT_S)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            _kill_tree(proc)
             raise ForgeError(f"generated tool exceeded {TIMEOUT_S}s")
         if proc.returncode != 0:
             raise ForgeError(f"generated tool crashed: {err.strip()[-800:]}")

@@ -51,6 +51,15 @@ class NeedsUser(ForgeError):
     error_class = ErrorClass.NEEDS_USER
 
 
+class ChallengeRequired(NeedsUser):
+    """A CAPTCHA / bot check / login wall that only the user can clear. Unlike a plain NeedsUser, the agent can wait in
+    place for the user to finish it in the visible browser window and then carry on (Forge never solves these itself)."""
+
+    def __init__(self, message: str, *, kind: str = "challenge", profile: str | None = None, url: str = ""):
+        super().__init__(message, kind=kind, url=url)
+        self.kind, self.profile, self.url = kind, profile, url
+
+
 class InterfaceChanged(ForgeError):
     error_class = ErrorClass.INTERFACE_CHANGED
 

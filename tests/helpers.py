@@ -70,3 +70,13 @@ def deploy(services, ir_dict) -> int:
 
 def dumps(x):
     return json.dumps(x, default=str)
+
+
+class Gate(BaseModel):
+    kind: str = "challenge"
+
+
+@tool("test.gate", Gate, description="always raises a user-only challenge (CAPTCHA/login) to exercise the wait-and-resume path")
+def gate(a, ctx):
+    from forge.errors import ChallengeRequired
+    raise ChallengeRequired("https://example.test shows a CAPTCHA", kind=a.kind, profile="p", url="https://example.test")
