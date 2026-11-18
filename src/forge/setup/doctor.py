@@ -36,20 +36,27 @@ def check_uv(cfg) -> Check:
 
 
 def check_gpu(cfg) -> Check:
-    from forge.setup.hardware import gpus
+    from forge.setup.hardware import gpus, is_apple_silicon
     g = gpus()
+    label = "apple gpu" if is_apple_silicon() else "nvidia gpu"
+    if not g and sys.platform == "darwin":
+        return _c("gpu", True, "no Apple Silicon GPU (Intel Mac): models run on the CPU", group="inference")
     if not g:
-        return _c("nvidia gpu", False, "nvidia-smi not found", "install the NVIDIA driver, or use the cpu-only profile", warn=True, group="inference")
+        return _c(label, False, "nvidia-smi not found", "install the NVIDIA driver, or use the cpu-only profile", warn=True, group="inference")
     top = max(g, key=lambda x: x.vram_mb)
+    if is_apple_silicon():
+        return _c(label, True, f"{top.name}, ~{top.vram_mb} MB usable", group="inference")
     free = top.vram_mb - top.used_mb
-    return _c("nvidia gpu", True, f"{top.name} {top.vram_mb} MB ({free} MB free), driver {top.driver}", group="inference")
+    return _c(label, True, f"{top.name} {top.vram_mb} MB ({free} MB free), driver {top.driver}", group="inference")
 
 
 def check_cuda_torch(cfg) -> Check:
     from forge.setup.hardware import cuda_torch
     ok = cuda_torch()
-    return _c("cuda torch", bool(ok), "available" if ok else ("torch missing" if ok is None else "CPU-only torch build"),
-              "uv sync (pyproject pins torch to the pytorch-cu126 index)", warn=True, group="inference")
+    from forge.setup.hardware import is_apple_silicon
+    name = "metal torch" if is_apple_silicon() else "cuda torch"
+    return _c(name, bool(ok), "available" if ok else ("torch missing" if ok is None else "CPU-only torch build"),
+              "re-run the installer or `uv sync`", warn=True, group="inference")
 
 
 def check_ollama(cfg) -> Check:
@@ -61,7 +68,7 @@ def check_ollama(cfg) -> Check:
         return _c("ollama", True, f"v{v} at {url}", group="inference")
     if ollama_path():
         return _c("ollama", False, f"installed but not reachable at {url}", "run `forge` (it starts `ollama serve`) or `ollama serve`", group="inference")
-    return _c("ollama", False, "not installed", "forge setup  (or: winget install Ollama.Ollama)", group="inference")
+    return _c("ollama", False, "not installed", "forge setup  (or: brew install ollama / winget install Ollama.Ollama)", group="inference")
 
 
 def check_models(cfg) -> Check:
@@ -81,6 +88,12 @@ def check_vram_fit(cfg) -> Check:
     g = gpus()
     if not g:
         return _c("vram fit", True, "no GPU (cpu profile)", group="inference")
+    if sys.platform == "darwin":   # only reached with an Apple GPU (gpus() is empty on Intel Macs)
+        total = max(x.vram_mb for x in g)
+        main = max((m.vram_mb for m in cfg.models if "tool_calling" in m.capabilities), default=0)
+        need = main + 700
+        return _c("memory fit", need <= total, f"main model + KV ≈ {need} MB of ~{total} MB usable unified memory",
+                  "pick a smaller profile (forge setup --profile apple-silicon-small)", warn=True, group="inference")
     total = max(x.vram_mb for x in g)
     main = max((m.vram_mb for m in cfg.models if "tool_calling" in m.capabilities), default=0)
     need = main + (1700 if cfg.laya.enabled and cfg.laya.device != "cpu" else 0) + 700
@@ -106,7 +119,13 @@ def check_playwright(cfg) -> Check:
         exe = Path(cfg.browser.executable)
         return _c("browser", exe.is_file(), str(exe), "forge config set browser.executable <path to brave.exe / msedge.exe>",
                   group="automation")
-    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ms-playwright"))
+    if sys.platform == "darwin":
+        default_root = Path.home() / "Library" / "Caches" / "ms-playwright"
+    elif sys.platform == "win32":
+        default_root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ms-playwright"
+    else:
+        default_root = Path.home() / ".cache" / "ms-playwright"
+    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", default_root))
     ok = root.exists() and any(root.glob("chromium-*"))
     return _c("playwright chromium", ok, str(root), "uv run playwright install chromium", warn=True, group="automation")
 
@@ -116,7 +135,7 @@ def check_keyring(cfg) -> Check:
         import keyring
         from forge.policy.approvals import KEYRING_SERVICE, KEYRING_USER
         ok = bool(keyring.get_password(KEYRING_SERVICE, KEYRING_USER))
-        return _c("approval signing key", True, "in Windows Credential Manager" if ok else "will be created on first approval", group="security")
+        return _c("approval signing key", True, ("in the system keychain" if sys.platform != "win32" else "in Windows Credential Manager") if ok else "will be created on first approval", group="security")
     except Exception as e:
         return _c("approval signing key", False, f"keyring unavailable: {e}", "Forge falls back to ~/.forge/.approval_key (less protected)", warn=True, group="security")
 
@@ -178,9 +197,15 @@ def check_session(cfg) -> Check:
 
 
 def check_startup(cfg) -> Check:
-    from forge.launcher import startup_installed
+    from forge.launcher import startup_installed, startup_supported
+    if not startup_supported():
+        return _c("start at login", True, "n/a on this platform", group="state")
     ok = startup_installed()
-    return _c("start at login", ok, "logon task installed" if ok else "not installed",
+    if sys.platform == "darwin" and not ok:
+        from forge.launcher import startup_problem
+        return _c("start at login", False, startup_problem(), "forge install-startup  (needed for unattended schedules after reboot)",
+                  warn=True, group="state")
+    return _c("start at login", ok, ("logon task installed" if sys.platform == "win32" else "LaunchAgent installed") if ok else "not installed",
               "forge install-startup  (needed for unattended schedules after reboot)", warn=True, group="state")
 
 

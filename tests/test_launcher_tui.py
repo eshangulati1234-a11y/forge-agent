@@ -93,3 +93,41 @@ async def test_tui_autocomplete_settings_approval_work(daemon):
             assert isinstance(app.screen, cls), cmd
             await pilot.press("escape")
             await pilot.pause(0.2)
+
+
+def test_launchd_plist_has_a_usable_path_and_restarts_on_crash(monkeypatch):
+    import plistlib
+
+    from forge import launcher
+    monkeypatch.setenv("PATH", "/usr/bin")
+    d = plistlib.loads(launcher._launchd_plist().encode())
+    path = d["EnvironmentVariables"]["PATH"].split(":")
+    assert "/opt/homebrew/bin" in path and path.index("/opt/homebrew/bin") < path.index("/usr/bin")
+    assert d["KeepAlive"] == {"SuccessfulExit": False} and d["RunAtLoad"] is True
+    assert d["ProgramArguments"][1:] == ["-m", "forge.cli", "daemon"]
+
+
+def test_startup_problem_detects_a_stale_interpreter(monkeypatch, tmp_path):
+    import plistlib
+    import sys
+
+    from forge import launcher
+    plist = tmp_path / "com.forge.daemon.plist"
+    monkeypatch.setattr(launcher, "_plist_path", lambda: plist)
+    assert launcher.startup_problem() == "not installed"
+    plist.write_bytes(plistlib.dumps({"ProgramArguments": ["/no/such/python", "-m", "forge.cli", "daemon"]}))
+    assert "missing interpreter" in launcher.startup_problem()
+    plist.write_bytes(plistlib.dumps({"ProgramArguments": [sys.executable, "-m", "forge.cli", "daemon"]}))
+    assert launcher.startup_problem() == ""
+
+
+def test_port_pid_falls_back_to_lsof_when_psutil_is_denied(monkeypatch):
+    import psutil
+
+    from forge import launcher
+
+    def denied(kind="tcp"):
+        raise psutil.AccessDenied(1)
+    monkeypatch.setattr(psutil, "net_connections", denied)
+    monkeypatch.setattr(launcher.subprocess, "run", lambda *a, **k: type("R", (), {"stdout": "4242\n"})())
+    assert launcher._port_pid(8765) == 4242

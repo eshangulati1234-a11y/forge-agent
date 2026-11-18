@@ -72,15 +72,24 @@ def _ensure_ollama() -> None:
         return
     except httpx.HTTPError:
         pass
-    exe = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe"
-    if not exe.exists():
-        exe = Path(shutil.which("ollama") or "")
-    if exe.exists():
+    from forge.setup.hardware import ollama_path
+    exe = Path(ollama_path() or "")
+    if exe.is_file():
         env = {**os.environ, "OLLAMA_MAX_LOADED_MODELS": "1", "OLLAMA_NUM_PARALLEL": "1", "OLLAMA_FLASH_ATTENTION": "1",
                "OLLAMA_KV_CACHE_TYPE": "q8_0", "OLLAMA_HOST": "127.0.0.1:11434"}
-        subprocess.Popen([str(exe), "serve"], env=env, creationflags=0x08000000 | 0x00000008,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(3)
+        extra = {"creationflags": 0x08000000 | 0x00000008} if sys.platform == "win32" else {"start_new_session": True}
+        subprocess.Popen([str(exe), "serve"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **extra)
+        for _ in range(60):          # wait for the API instead of a fixed sleep (cold starts can take a while)
+            time.sleep(0.5)
+            try:
+                httpx.get("http://127.0.0.1:11434/api/version", timeout=1)
+                return
+            except httpx.HTTPError:
+                pass
+        typer.secho("Ollama did not answer within 30s; models will be unavailable until it is running (`forge doctor`).",
+                    fg="yellow", err=True)
+    else:
+        typer.secho("Ollama is not installed; run `forge setup` (or install it from https://ollama.com).", fg="yellow", err=True)
 
 
 @app.command()
@@ -101,8 +110,8 @@ def tui(cont: bool = typer.Option(False, "--continue", "-c"), resume: str = type
 
 @app.command()
 def setup(yes: bool = typer.Option(False, "--yes", "-y", help="accept safe defaults without prompting"),
-          profile: str = typer.Option(None, help="gpu-8gb | gpu-12gb | gpu-12gb-qwen35 | cpu-only"),
-          install_ollama: bool = typer.Option(False, help="with --yes: allow installing Ollama via winget"),
+          profile: str = typer.Option(None, help="gpu-8gb | gpu-12gb | gpu-12gb-qwen35 | apple-silicon | apple-silicon-small | cpu-only"),
+          install_ollama: bool = typer.Option(False, help="with --yes: allow installing Ollama (winget on Windows, Homebrew on macOS)"),
           startup: bool = typer.Option(None, help="with --yes: install (or not) the start-at-login task"),
           no_pull: bool = typer.Option(False, help="skip model downloads")):
     """First-run wizard: hardware check, model profile, Ollama + models, browser, Laya, start-at-login. Idempotent."""

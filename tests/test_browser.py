@@ -363,3 +363,31 @@ async def test_scroll_window_inner_panes_and_to_element(services, site):
         assert pane["scroll_pct"] > 0 and await manager._pages["jobs"].evaluate("document.getElementById('p').scrollTop") > 0
     finally:
         await manager.close()
+
+
+async def test_wait_until_clear_resumes_after_the_user_finishes_the_check(services, site):
+    import asyncio
+
+    import forge.browser.tools as bt
+    from forge.errors import ChallengeRequired
+    manager = bt.mgr(ToolContext(services))
+    try:
+        with pytest.raises(ChallengeRequired) as ei:
+            await manager.open(f"{site}/captcha", "c", allow_hosts=None)
+        assert ei.value.kind == "challenge"
+        page = manager._pages["c"]
+
+        async def user_solves():
+            await asyncio.sleep(0.8)
+            await page.evaluate("document.body.innerText = 'Welcome, you are through'")
+        solver = asyncio.create_task(user_solves())
+        state = await manager.wait_until_clear("c", "challenge", timeout_s=10, poll_s=0.2)
+        await solver
+        assert state and state["url"].endswith("/captcha")
+        assert await page.inner_text("body") == "Welcome, you are through"
+        # still blocked -> times out instead of resuming
+        await page.evaluate("document.body.innerText = 'Please verify you are human to continue'")
+        assert await manager.wait_until_clear("c", "challenge", timeout_s=1.5, poll_s=0.2) is None
+    finally:
+        await manager.close()
+        bt._MGR = None

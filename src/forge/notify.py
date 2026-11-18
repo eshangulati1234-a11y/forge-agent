@@ -5,6 +5,8 @@ import logging
 import subprocess
 import sys
 
+from forge._plat import win_flags
+
 log = logging.getLogger("forge.notify")
 
 _TOAST_PS = r"""
@@ -23,6 +25,6 @@ def toast(title: str, body: str) -> None:
     env = {**os.environ, "FORGE_T": title[:120], "FORGE_B": body[:240]}  # passed via env: no injection into the script
     try:
         subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-Command", _TOAST_PS], env=env,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x08000000)
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **win_flags())
     except Exception as e:
         log.debug("toast failed: %s", e)

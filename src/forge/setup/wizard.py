@@ -6,6 +6,7 @@ It never installs system software or a startup task without an explicit yes (int
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 
@@ -55,6 +56,26 @@ def pull_model(url: str, model: str) -> bool:
     return True
 
 
+def _install_ollama_macos() -> None:
+    """Homebrew if present, otherwise the official app from ollama.com into ~/Applications."""
+    if shutil.which("brew"):
+        subprocess.run(["brew", "install", "ollama"])
+        return
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as tmp:
+        zip_path = Path(tmp) / "ollama.zip"
+        with console.status("Downloading Ollama from ollama.com…"):
+            with httpx.stream("GET", "https://ollama.com/download/Ollama-darwin.zip", follow_redirects=True, timeout=None) as r:
+                r.raise_for_status()
+                with open(zip_path, "wb") as f:
+                    for chunk in r.iter_bytes():
+                        f.write(chunk)
+        dest = Path.home() / "Applications"
+        dest.mkdir(exist_ok=True)
+        subprocess.run(["ditto", "-x", "-k", str(zip_path), str(dest)], check=True)
+
+
 def run(yes: bool = False, profile: str | None = None, install_ollama: bool = False, startup: bool | None = None,
         pull: bool = True, warm_laya: bool = True) -> int:
     from forge import settings
@@ -70,17 +91,17 @@ def run(yes: bool = False, profile: str | None = None, install_ollama: bool = Fa
     t.add_row("Python", hw.python)
     t.add_row("RAM", f"{hw.ram_gb} GB")
     for g in hw.gpus:
-        t.add_row("GPU", f"{g.name} — {g.vram_mb} MB (driver {g.driver})")
+        t.add_row("GPU", f"{g.name} — {g.vram_mb} MB" + (f" (driver {g.driver})" if g.driver else ""))
     if not hw.gpus:
-        t.add_row("GPU", "[yellow]no NVIDIA GPU found[/yellow]")
-    t.add_row("CUDA torch", "yes" if hw.cuda_torch else "[yellow]no[/yellow]")
+        t.add_row("GPU", "[yellow]no supported GPU found (using CPU)[/yellow]")
+    t.add_row("Accelerated torch", "yes" if hw.cuda_torch else "[yellow]no[/yellow]")
     t.add_row("Ollama", f"v{hw.ollama_version} (running)" if hw.ollama_version else ("installed, not running" if hw.ollama_path else "[yellow]not installed[/yellow]"))
     if hw.session_id == 0:
         t.add_row("Session", "[red]Session 0 — desktop automation will not work here[/red]")
     console.print(t)
 
     # 2. profile
-    rec = recommend(hw.max_vram_mb)
+    rec = recommend(hw.max_vram_mb, apple_silicon=hardware.is_apple_silicon())
     if profile is None and not yes:
         console.print("\n[b]Model profiles[/b]")
         for p in PROFILES.values():
@@ -98,11 +119,15 @@ def run(yes: bool = False, profile: str | None = None, install_ollama: bool = Fa
     if not hw.ollama_path:
         if sys.platform == "win32" and _ask("Ollama is not installed. Install it now with winget?", True, yes, install_ollama):
             subprocess.run(["winget", "install", "--id", "Ollama.Ollama", "-e", "--accept-source-agreements", "--accept-package-agreements"])
+        elif sys.platform == "darwin" and _ask("Ollama is not installed. Install it now?", True, yes, install_ollama):
+            _install_ollama_macos()
         else:
             console.print("[yellow]Skipping Ollama install. Install it from https://ollama.com and re-run `forge setup`.[/yellow]")
     if not hardware.ollama_version(url):
         from forge.cli import _ensure_ollama
         _ensure_ollama()
+    if not hardware.ollama_version(url):
+        console.print("[red]Ollama is not running, so models cannot be pulled. Fix this and re-run `forge setup`.[/red]")
 
     # 4. models
     node_name = node.name if node else "local"
@@ -148,7 +173,7 @@ def run(yes: bool = False, profile: str | None = None, install_ollama: bool = Fa
 
     # 9. startup
     from forge import launcher
-    if sys.platform == "win32" and not launcher.startup_installed():
+    if launcher.startup_supported() and not launcher.startup_installed():
         if _ask("Start Forge automatically when you log in? (needed for unattended schedules)", False, yes, startup):
             console.print(launcher.install_startup())
 

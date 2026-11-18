@@ -118,13 +118,77 @@ def _cmdline(p) -> list[str]:
 
 def _port_pid(port: int) -> int | None:
     import psutil
-    for c in psutil.net_connections(kind="tcp"):
-        if c.laddr and c.laddr.port == port and c.status == psutil.CONN_LISTEN:
-            return c.pid
-    return None
+    try:
+        for c in psutil.net_connections(kind="tcp"):
+            if c.laddr and c.laddr.port == port and c.status == psutil.CONN_LISTEN:
+                return c.pid
+        return None
+    except psutil.AccessDenied:
+        # macOS only lets root list every connection; lsof can still see our own listening sockets.
+        try:
+            out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True, timeout=5).stdout
+            return int(out.split()[0]) if out.split() else None
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+
+
+LAUNCHD_LABEL = "com.forge.daemon"
+
+
+def _plist_path() -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
+
+
+def _launchd_path() -> str:
+    """launchd starts jobs with a bare PATH; add where Homebrew, uv and the Ollama app put their binaries."""
+    home = Path.home()
+    extra = ["/opt/homebrew/bin", "/usr/local/bin", str(home / ".local" / "bin"), str(home / ".cargo" / "bin"),
+             "/Applications/Ollama.app/Contents/Resources", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]   # stable dirs first
+    seen: list[str] = []
+    for p in [*extra, *os.environ.get("PATH", "").split(os.pathsep)]:
+        if p and p not in seen:
+            seen.append(p)
+    return os.pathsep.join(seen)
+
+
+def _launchd_plist() -> str:
+    from xml.sax.saxutils import escape
+    log = forge_home() / "logs" / "forged.stdout.log"
+    args = "".join(f"<string>{escape(a)}</string>" for a in (_python(), "-m", "forge.cli", "daemon"))
+    return ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+            f"<plist version=\"1.0\"><dict><key>Label</key><string>{LAUNCHD_LABEL}</string>"
+            f"<key>ProgramArguments</key><array>{args}</array>"
+            f"<key>WorkingDirectory</key><string>{escape(str(forge_home()))}</string>"
+            f"<key>EnvironmentVariables</key><dict><key>PATH</key><string>{escape(_launchd_path())}</string></dict>"
+            f"<key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>"
+            f"<key>ThrottleInterval</key><integer>30</integer>"
+            f"<key>StandardOutPath</key><string>{escape(str(log))}</string>"
+            f"<key>StandardErrorPath</key><string>{escape(str(log))}</string></dict></plist>\n")
+
+
+def startup_problem() -> str:
+    """'' when the login item is installed and still points at a working interpreter; otherwise what is wrong (macOS)."""
+    p = _plist_path()
+    if not p.exists():
+        return "not installed"
+    try:
+        import plistlib
+        args = plistlib.loads(p.read_bytes())["ProgramArguments"]
+    except Exception as e:
+        return f"unreadable plist ({e})"
+    if not Path(args[0]).exists():
+        return f"points at a missing interpreter ({args[0]}); re-run `forge install-startup`"
+    return ""
+
+
+def startup_supported() -> bool:
+    return sys.platform in ("win32", "darwin")
 
 
 def startup_installed() -> bool:
+    if sys.platform == "darwin":
+        return startup_problem() == ""
     if sys.platform != "win32":
         return False
     r = subprocess.run(["schtasks", "/Query", "/TN", TASK_NAME], capture_output=True, text=True, creationflags=0x08000000)
@@ -132,7 +196,16 @@ def startup_installed() -> bool:
 
 
 def install_startup() -> str:
-    """Logon task in the interactive session (a Session 0 service cannot drive the desktop)."""
+    """Logon task in the interactive session (a Session 0 service cannot drive the desktop). macOS: a launchd LaunchAgent."""
+    if sys.platform == "darwin":
+        (forge_home() / "logs").mkdir(parents=True, exist_ok=True)
+        p = _plist_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_launchd_plist(), encoding="utf-8")
+        # RunAtLoad starts it at the next login; bootstrapping now would race with a daemon the caller already started.
+        return f"LaunchAgent installed: {p} (forged starts at login and restarts if it crashes)"
+    if sys.platform != "win32":
+        return "start-at-login is only supported on Windows and macOS"
     cmd = f'"{_python()}" -m forge.cli daemon'
     r = subprocess.run(["schtasks", "/Create", "/TN", TASK_NAME, "/SC", "ONLOGON", "/RL", "LIMITED", "/F", "/TR", cmd,
                         "/DELAY", "0000:30"], capture_output=True, text=True)
@@ -140,5 +213,12 @@ def install_startup() -> str:
 
 
 def uninstall_startup() -> str:
+    if sys.platform == "darwin":
+        p = _plist_path()
+        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"], capture_output=True)
+        p.unlink(missing_ok=True)
+        return "LaunchAgent removed"
+    if sys.platform != "win32":
+        return "nothing to remove"
     r = subprocess.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"], capture_output=True, text=True)
     return (r.stdout or r.stderr).strip()

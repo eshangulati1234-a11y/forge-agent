@@ -11,7 +11,8 @@ from pathlib import Path
 
 import httpx
 
-NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+from forge._plat import win_flags
+
 
 
 @dataclass
@@ -42,13 +43,35 @@ class Hardware:
         return asdict(self)
 
 
+def is_apple_silicon() -> bool:
+    return sys.platform == "darwin" and platform.machine() == "arm64"
+
+
+def apple_gpu() -> Gpu | None:
+    """Apple Silicon shares unified memory with the GPU; Metal can use roughly 2/3 of RAM on smaller Macs, 3/4 on larger."""
+    if not is_apple_silicon():
+        return None
+    import psutil
+    total_mb = psutil.virtual_memory().total // 2**20
+    name = "Apple Silicon"
+    try:
+        name = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, timeout=3).stdout.strip() or name
+    except Exception:
+        pass
+    usable = int(total_mb * (0.75 if total_mb >= 36 * 1024 else 0.66))
+    return Gpu(f"{name} (Metal, unified memory)", usable, 0, "")
+
+
 def gpus() -> list[Gpu]:
+    apple = apple_gpu()
+    if apple:
+        return [apple]
     exe = shutil.which("nvidia-smi")
     if not exe:
         return []
     try:
         out = subprocess.run([exe, "--query-gpu=name,memory.total,memory.used,driver_version", "--format=csv,noheader,nounits"],
-                             capture_output=True, text=True, timeout=8, creationflags=NO_WINDOW).stdout
+                             capture_output=True, text=True, timeout=8, **win_flags()).stdout
     except Exception:
         return []
     res = []
@@ -60,10 +83,19 @@ def gpus() -> list[Gpu]:
 
 
 def ollama_path() -> str | None:
-    p = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe"
-    if p.exists():
-        return str(p)
-    return shutil.which("ollama")
+    if sys.platform == "win32":
+        p = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe"
+        if p.exists():
+            return str(p)
+    found = shutil.which("ollama")
+    if found:
+        return found
+    if sys.platform == "darwin":
+        for app in (Path("/Applications/Ollama.app"), Path.home() / "Applications" / "Ollama.app"):
+            exe = app / "Contents" / "Resources" / "ollama"
+            if exe.exists():
+                return str(exe)
+    return None
 
 
 def ollama_version(url: str = "http://127.0.0.1:11434") -> str | None:
@@ -91,8 +123,11 @@ def session_id() -> int | None:
 
 
 def cuda_torch() -> bool | None:
+    """True when torch has a usable accelerator: CUDA, or Metal (MPS) on Apple Silicon."""
     try:
         import torch
+        if is_apple_silicon():
+            return bool(torch.backends.mps.is_available())
         return bool(torch.cuda.is_available())
     except Exception:
         return None

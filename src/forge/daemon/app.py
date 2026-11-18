@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from forge._plat import win_flags
 from forge.config import api_token
 from forge.errors import ForgeError
 
@@ -35,7 +36,7 @@ async def _gpu_loop() -> None:
         try:
             out = await asyncio.to_thread(subprocess.run, ["nvidia-smi", "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
                                                             "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=5,
-                                          creationflags=0x08000000)
+                                          **win_flags())
             name, used, total, util, temp = [x.strip() for x in out.stdout.strip().split(",")]
             GPU.update(name=name, mem_used_mb=int(used), mem_total_mb=int(total), util_pct=int(util), temp_c=int(temp), ts=time.time())
         except Exception as e:

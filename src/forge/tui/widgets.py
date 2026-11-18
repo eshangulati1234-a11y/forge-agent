@@ -172,7 +172,7 @@ class ActivityIndicator(Static):
         elapsed = max(0, time.monotonic() - self.started) if self.started is not None else 0
         state = "stopped" if self.estop else "offline" if self.offline else self.state
         active = state in self.ACTIVE
-        labels = {"ready": "Ready", "responding": "Responding…", "approval": "Waiting for approval",
+        labels = {"ready": "Ready", "responding": "Responding…", "approval": "Waiting for approval", "needs_you": "Waiting for you in the browser window",
                   "interrupted": "Interrupted", "offline": "Connection lost · reconnecting…",
                   "stopped": "Emergency stop · /unstop to continue", "error": "Something went wrong", "interrupting": "Stopping…"}
         if state == "thinking":
@@ -180,7 +180,7 @@ class ActivityIndicator(Static):
             label = word + "…"
         else:
             label = self.label if state in ("tool", "operation") else labels.get(state, state)
-        colour = "red" if state in ("stopped", "error", "offline") else "yellow" if state in ("approval", "interrupted") else "cyan" if active else "green"
+        colour = "red" if state in ("stopped", "error", "offline") else "yellow" if state in ("approval", "needs_you", "interrupted") else "cyan" if active else "green"
         icon = self.FRAMES[int(elapsed * 10) % len(self.FRAMES)] if active and self.animations else "●"
         out = Text()
         out.append(icon + " ", style=colour)

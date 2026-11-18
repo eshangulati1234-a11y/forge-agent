@@ -8,7 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from forge.browser.agent import BrowserManager
-from forge.errors import NeedsUser
+from forge.errors import ChallengeRequired, NeedsUser
 from forge.tools.registry import SideEffect, ToolContext, tool
 
 _MGR: BrowserManager | None = None
@@ -45,8 +45,9 @@ async def open_(a: Open, ctx: ToolContext):
         await asyncio.sleep(a.wait_s)
     res = await mgr(ctx).open(a.url, a.profile, headless=a.headless, allow_hosts=_allow(ctx), new_tab=a.new_tab)
     if a.require_login and res.get("login_required"):
-        raise NeedsUser(f"{res['url']} wants you to log in. Log in in the Forge browser window (profile "
-                        f"'{mgr(ctx).current}'), then continue.")
+        raise ChallengeRequired(f"{res['url']} wants you to log in. Log in in the Forge browser window (profile "
+                                f"'{mgr(ctx).current}'); Forge continues when you are through.", kind="login",
+                                profile=mgr(ctx).current, url=res["url"])
     return res
 
 
