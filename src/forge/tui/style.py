@@ -4,10 +4,10 @@ from textual.theme import Theme
 
 FORGE_BLACK = Theme(
     name="forge-black", primary="#ffffff", secondary="#a0a0a0", accent="#72c7e8",
-    foreground="#ffffff", background="#000000", surface="#000000", panel="#000000",
+    foreground="#ffffff", background="ansi_default", surface="ansi_default", panel="ansi_default",
     boost="#202020", success="#80c991", warning="#e4be71", error="#ef8585",
     dark=True, text_alpha=1.0, luminosity_spread=0,
-    variables={"text-muted": "#a0a0a0", "border": "#444444", "footer-background": "#000000"},
+    variables={"text-muted": "#a0a0a0", "border": "#444444", "footer-background": "ansi_default"},
 )
 
 CSS = """

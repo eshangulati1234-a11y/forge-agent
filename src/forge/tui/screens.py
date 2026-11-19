@@ -159,11 +159,12 @@ class SettingsScreen(_Base):
 
 # ------------------------------------------------------------------------------------- models
 class ModelsScreen(_Base):
-    BINDINGS = _Base.BINDINGS + [Binding("u", "unpin", "unpin"), Binding("p", "pull", "pull model")]
+    BINDINGS = _Base.BINDINGS + [Binding("u", "unpin", "unpin"), Binding("p", "pull", "pull model"),
+                                  Binding("a", "use_all", "one model for all"), Binding("r", "auto", "automatic")]
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal"):
-            yield Label("Models  ·  Enter pin · u unpin · p pull · Esc close", classes="modal-title")
+            yield Label("Models  ·  Enter pin · a use for ALL tasks · r automatic · u unpin · p pull · Esc", classes="modal-title")
             with Horizontal():
                 yield OptionList(id="caps")
                 yield DataTable(id="models_t", cursor_type="row")
@@ -183,7 +184,7 @@ class ModelsScreen(_Base):
         cur = ol.highlighted or 0
         ol.clear_options()
         for cap in d["capabilities"]:
-            pin = d["pins"].get(cap)
+            pin = d["pins"].get(cap) or (d.get("single") if cap not in ("embedding",) else None)
             ol.add_option(Option(Text.assemble((cap, "bold"), (f"  → {pin}" if pin else "  (auto)", "cyan" if pin else "dim")), id=cap))
         if d["capabilities"]:
             ol.highlighted = min(cur, len(d["capabilities"]) - 1)
@@ -210,6 +211,24 @@ class ModelsScreen(_Base):
             except ClientError as e:
                 self.flash("#msg", f"✗ {e}", ok=False)
             await self.load()
+
+    async def action_use_all(self) -> None:
+        """Route every text task to the highlighted model so nothing is loaded or unloaded between tasks."""
+        t = self.query_one("#models_t", DataTable)
+        if not t.row_count:
+            return
+        model = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value.split("|", 1)[1]
+        try:
+            await self.c.post("/settings", {"key": "routing.single_model", "value": model})
+            self.flash("#msg", f"✓ every text task now uses {model} (embeddings stay separate)")
+        except ClientError as e:
+            self.flash("#msg", f"✗ {e}", ok=False)
+        await self.load()
+
+    async def action_auto(self) -> None:
+        await self.c.post("/settings", {"key": "routing.single_model", "value": ""})
+        self.flash("#msg", "automatic routing restored")
+        await self.load()
 
     async def action_unpin(self) -> None:
         cap = self.cap()
@@ -379,7 +398,8 @@ class SessionsScreen(_Base):
 # ------------------------------------------------------------------------------------- approval
 class ApprovalScreen(_Base):
     """Pops up when something needs the user's decision. Shows exactly what will happen."""
-    BINDINGS = [Binding("a", "approve", "approve"), Binding("d", "deny", "deny"), Binding("escape", "later", "decide later")]
+    BINDINGS = [Binding("y", "approve", "yes"), Binding("n", "deny", "no"), Binding("a", "approve", show=False), Binding("d", "deny", show=False),
+                Binding("escape", "later", "decide later")]
 
     def __init__(self, approval: dict):
         super().__init__()
@@ -389,7 +409,7 @@ class ApprovalScreen(_Base):
         subj = json.loads(self.ap.get("subject_json") or "{}")
         kind = self.ap.get("kind")
         with Vertical(classes="modal"):
-            yield Label(f"⚠ Approval needed  ·  a approve · d deny · Esc decide later (F4)", classes="modal-title")
+            yield Label(f"⚠ Approval needed  ·  y approve · n deny · Esc decide later (F4)", classes="modal-title")
             yield Static(Text.assemble((self.ap["title"], "bold"), f"\n{kind} · requested by {self.ap.get('requested_by')} · "
                                        f"expires {ts(self.ap.get('expires_at'))}"))
             if kind == "deploy":
@@ -400,7 +420,7 @@ class ApprovalScreen(_Base):
                                            (f"\n⚠ {len(adv)} advisory test expectation(s) failed: {adv[:3]}" if adv else "", "yellow")))
             with VerticalScroll():
                 yield Static(Syntax(json.dumps(subj, indent=2, default=str)[:12000], "json", theme="ansi_dark", word_wrap=True))
-            yield Input(placeholder="reason (optional) — then press a or d", id="reason")
+            yield Input(placeholder="reason (optional) — then press y or n", id="reason")
 
     def on_mount(self) -> None:
         self.query_one(VerticalScroll).focus()

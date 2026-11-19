@@ -109,3 +109,42 @@ def test_audit_chain_detects_tamper(services):
     assert services.db.verify_audit_chain()[0]
     services.db.execute("UPDATE audit SET data_json='{\"x\":9}' WHERE event='e1'")
     assert not services.db.verify_audit_chain()[0]
+
+
+async def test_desktop_in_chat_asks_every_time_even_with_desktop_flag_off(services):
+    from forge.policy.engine import session_permissions
+    perms = session_permissions(services.cfg.workspace_path)
+    assert perms.desktop is False
+    c = ToolContext(services, session_id="s1")
+    with pytest.raises(NeedsApproval) as e:
+        await invoke_tool(services, "test.desk", {}, perms, c, interactive=True)
+    services.approvals.decide(e.value.approval_id, True)
+    assert (await invoke_tool(services, "test.desk", {}, perms, c, interactive=True)) == {"clicked": True}
+    with pytest.raises(NeedsApproval):   # one approval = one action
+        await invoke_tool(services, "test.desk", {}, perms, c, interactive=True)
+
+
+async def test_unattended_workflow_cannot_use_desktop_without_the_grant(services):
+    with pytest.raises(PermissionDenied):
+        await invoke_tool(services, "test.desk", {}, Permissions(tools=["test.*"]), ctx(services), interactive=False)
+
+
+async def test_web_search_reads_searxng_and_explains_when_unconfigured(services, monkeypatch):
+    import httpx
+
+    from forge.errors import InvalidInput
+    import forge.tools.websearch as ws
+    perms = Permissions(tools=["web.*"])
+    with pytest.raises(InvalidInput, match="not configured"):
+        await invoke_tool(services, "web.search", {"query": "x"}, perms, ctx(services), interactive=False)
+    services.cfg.search.searxng_url = "http://searx.test"
+    real = httpx.AsyncClient
+    handler = lambda req: httpx.Response(200, json={"results": [{"title": "T", "url": "http://a", "content": "c"}] * 9})
+    monkeypatch.setattr(ws.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    out = await invoke_tool(services, "web.search", {"query": "x", "n": 3}, perms, ctx(services), interactive=False)
+    assert len(out["results"]) == 3 and out["results"][0]["title"] == "T"
+
+
+def test_system_prompt_asks_instead_of_assuming():
+    from forge.agent.loop import SYSTEM
+    assert "Do not assume" in SYSTEM and "ONE short question" in SYSTEM and "desktop" in SYSTEM

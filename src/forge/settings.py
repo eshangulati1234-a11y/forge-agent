@@ -46,6 +46,8 @@ DESCRIPTIONS = {
     "laya.accept_threshold": "Raw Laya confidence needed to act without escalating to the LLM. Refit with `forge bench laya`.",
     "laya.verify_threshold": "Confidence needed for Laya to confirm a step succeeded.",
     "laya.device": "cuda / cpu / leave empty for auto.",
+    "routing.single_model": "Use one model for every text task so models are never swapped in memory, e.g. \"qwen3:8b\". Empty = automatic routing.",
+    "search.searxng_url": "SearXNG base URL that powers web.search, e.g. http://127.0.0.1:8888. Empty = web.search disabled.",
     "routing.pins": "Force a model for a capability, e.g. {\"reasoning\": \"qwen3:8b\"}.",
     "tools.disabled": "Tool globs switched off for the agent and all workflows, e.g. [\"desktop.*\"].",
     "tui.theme": "Textual theme name.",

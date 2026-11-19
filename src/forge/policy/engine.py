@@ -101,7 +101,11 @@ class PolicyEngine:
             raise EmergencyStop("emergency stop is active (forge resume to clear)")
         if not perms.allows_tool(spec.name):
             raise PermissionDenied(f"tool '{spec.name}' is not granted to this {'session' if interactive else 'workflow'}")
+        # Desktop control in a chat is never pre-granted: every action asks the user (below). Workflows still need the grant.
+        ask_desktop = interactive and "desktop" in spec.caps
         for cap, flag in CAP_FLAGS.items():
+            if ask_desktop and cap == "desktop":
+                continue
             if cap in spec.caps and not getattr(perms, flag):
                 raise PermissionDenied(f"tool '{spec.name}' needs the '{cap}' capability, which is not granted")
 
@@ -122,9 +126,10 @@ class PolicyEngine:
             if val and not host_allowed(val, perms.net):
                 self._scope_violation(interactive, scope, "net", urlparse(val).hostname or val, spec.name)
 
-        if spec.side_effect == SideEffect.EXTERNAL and dry_run:
+        gated = spec.side_effect == SideEffect.EXTERNAL or ask_desktop
+        if gated and dry_run:
             return Decision(True, "dry_run")
-        if spec.side_effect == SideEffect.EXTERNAL:
+        if gated:
             subject = {"type": "action", "tool": spec.name, "args": data, **scope}
             status, row = self.approvals.status_for(subject)
             if status == "approved":
@@ -134,7 +139,7 @@ class PolicyEngine:
                 raise PermissionDenied(f"user denied {spec.name}: {row.get('reason') or ''}".strip())
             row = self.approvals.request("action", f"{spec.name}: {_summ(data)}", subject,
                                          requested_by=scope.get("run_id") or scope.get("session_id") or "agent")
-            raise NeedsApproval(f"{spec.name} is an external action and needs approval", row["id"])
+            raise NeedsApproval(f"{spec.name} {'controls your desktop' if ask_desktop else 'is an external action'} and needs approval", row["id"])
         return Decision(True, "granted")
 
     def _scope_violation(self, interactive: bool, scope: dict, kind: str, value: str, tool: str) -> None:
@@ -160,4 +165,4 @@ def _summ(d: dict, n: int = 90) -> str:
 def session_permissions(workspace: Path) -> Permissions:
     """Chat sessions: all tools visible, reads in user profile, writes in workspace, no net until approved."""
     return Permissions(tools=["*"], fs_read=[str(Path.home())], fs_write=[str(workspace)], net=["127.0.0.1", "localhost"],
-                       desktop=True, browser=True, shell=False)
+                       desktop=False, browser=True, shell=False)   # desktop: asked per action, see check()

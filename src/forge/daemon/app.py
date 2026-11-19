@@ -44,6 +44,20 @@ async def _gpu_loop() -> None:
         await asyncio.sleep(5)
 
 
+async def _warm_up() -> None:
+    """Pay the cold-start costs once, in the background, so the first real request is as fast as the hundredth:
+    Laya's first prediction (~4 s: weights + kernels) and loading the main/embedding models into memory."""
+    t = time.time()
+    try:
+        await S.router.refresh()
+        models = await S.router.warm()
+        if S.laya is not None:
+            await asyncio.to_thread(S.laya.yes_no_sync, "warm up", "Is this a warm-up call?")
+        log.info("warm-up done in %.1fs (models %s, laya %s)", time.time() - t, models, "ready" if S.laya else "off")
+    except Exception as e:
+        log.warning("warm-up failed (first request will be slower): %s", e)
+
+
 async def _router_loop() -> None:
     while True:
         await S.router.refresh()
@@ -69,8 +83,7 @@ async def lifespan(app: FastAPI):
     S.db.execute("UPDATE sessions SET status='interrupted' WHERE status='running'")
     S.db.audit("daemon", "daemon.start", {"tools": len(S.registry.names()), "plugins": S.plugins})
     tasks = [asyncio.create_task(c) for c in (S.runtime.serve(), S.scheduler.serve(), _router_loop(), _gpu_loop())]
-    if S.laya is not None:
-        asyncio.create_task(asyncio.to_thread(S.laya._ensure))   # warm Laya in the background (~40 s cold)
+    asyncio.create_task(_warm_up())
     log.info("forged ready: %d tools (mcp %d, generated %d), plugins=%s", len(S.registry.names()), len(mcp_tools), len(gen_tools), S.plugins)
     yield
     await bridge.aclose()
@@ -189,7 +202,7 @@ async def models_available():
                 entry["models"].append(out_m)
         out.append(entry)
     caps = sorted({c for m in S.router.models for c in m.capabilities})
-    return {"nodes": out, "capabilities": caps, "pins": S.router.pinned}
+    return {"nodes": out, "capabilities": caps, "pins": S.router.pinned, "single": S.router.single}
 
 
 class PullBody(BaseModel):

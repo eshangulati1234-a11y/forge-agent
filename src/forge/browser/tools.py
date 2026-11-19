@@ -3,6 +3,7 @@ host-restricted for navigation but every open still goes through the policy url 
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -125,6 +126,36 @@ class Find(BaseModel):
     role: str | None = None
 
 
+_STOP = {"the", "a", "an", "to", "of", "for", "on", "in", "and", "or", "that", "this", "my", "one", "first", "main", "page"}
+_ROLE_WORDS = {"box": {"textbox", "searchbox", "combobox"}, "field": {"textbox", "searchbox", "combobox"},
+               "input": {"textbox", "searchbox", "combobox"}, "bar": {"textbox", "searchbox", "combobox"},
+               "textbox": {"textbox", "searchbox", "combobox"}, "button": {"button"}, "link": {"link"},
+               "checkbox": {"checkbox"}, "dropdown": {"combobox", "listbox", "select"}, "menu": {"combobox", "menuitem", "listbox"}}
+
+
+def fast_match(els: list[dict], description: str) -> dict | None:
+    """System 0: when exactly one element's accessible name carries the description's words (and the role fits any
+    'box/button/link' hint), answer without Laya or the LLM. None means 'ask the models': never guesses on a tie."""
+    words = [w for w in re.findall(r"[a-z0-9]+", description.lower()) if w not in _STOP]
+    roles: set[str] = set()
+    for w in words:
+        roles |= _ROLE_WORDS.get(w, set())
+    content = [w for w in words if w not in _ROLE_WORDS]
+    if not content:
+        return None
+    scored = []
+    for e in els:
+        name = (e.get("name") or "").lower()
+        if not name or (roles and e.get("role") not in roles):
+            continue
+        hit = sum(1 for w in content if re.search(rf"\b{re.escape(w)}", name))
+        if hit == len(content):
+            scored.append((hit, e))
+    if len(scored) == 1:
+        return scored[0][1]
+    return None
+
+
 FIND_HINT = "browser.find only locates ONE link/button/field to act on; to read page text use browser.read"
 
 
@@ -137,6 +168,9 @@ async def find(a: Find, ctx: ToolContext):
         return {"found": False, "hint": FIND_HINT}
     # An explicit "none" lets System 2 refuse; without it, asking for "the job description text" returned
     # whichever link was least wrong, as found=True, and the model kept rephrasing.
+    quick = fast_match(els, a.description)
+    if quick is not None:
+        return {"found": True, "element": quick, "system": 0, "confidence": 1.0}
     none = {"none": "none of these elements matches"}
     options = {e["id"]: f"{e['role']} '{e['name']}'" for e in els if e["name"]} | none
     laya_opts = {e["id"]: e["name"] for e in els if e["name"]} | none

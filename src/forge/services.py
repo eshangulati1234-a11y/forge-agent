@@ -61,6 +61,7 @@ class Services:
         import forge.agent.loop  # noqa: F401  (agent.delegate)
         import forge.tools.builtin  # noqa: F401  (registers on import)
         import forge.tools.toolgen  # noqa: F401  (tools.generate)
+        import forge.tools.websearch  # noqa: F401  (web.search)
         try:
             import forge.desktop.tools  # noqa: F401
         except Exception as e:

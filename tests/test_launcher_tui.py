@@ -77,7 +77,7 @@ async def test_tui_autocomplete_settings_approval_work(daemon):
         app.handle_forge_event({"seq": 0, "ts": 0, "kind": "approval.requested", "approval_id": ap["id"], "title": "t"})
         await pilot.pause(1)
         assert isinstance(app.screen, screens.ApprovalScreen)
-        await pilot.press("a")
+        await pilot.press("y")
         await pilot.pause(1)
         assert DB().one("SELECT status FROM approvals WHERE id=?", (ap["id"],))["status"] == "approved"
         # work monitor

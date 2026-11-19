@@ -141,13 +141,14 @@ class ForgeTUI(App):
         Binding("f7", "tab('activity')", "Activity"),
         Binding("ctrl+o", "open('settings')", "Settings"), Binding("ctrl+t", "open('work')", "Work"),
         Binding("ctrl+x", "open('sessions')", "Sessions"), Binding("ctrl+e", "estop", "E-STOP"), Binding("ctrl+q", "quit", "Quit"),
-        Binding("a", "approve", "Approve", show=False), Binding("x", "deny", "Deny", show=False), Binding("r", "run_wf", "Run", show=False),
+        Binding("y", "approve", "Approve", show=False), Binding("n", "deny", "Deny", show=False),
+        Binding("a", "approve", show=False), Binding("x", "deny", show=False), Binding("ctrl+c", "ctrl_c", "Interrupt", show=False), Binding("r", "run_wf", "Run", show=False),
         Binding("b", "rollback", "Rollback", show=False), Binding("e", "export", "Export", show=False), Binding("c", "cancel_run", "Cancel", show=False),
         Binding("d", "disable_wf", "Disable", show=False),
     ]
 
     def __init__(self, session: str | None = None, continue_last: bool = False):
-        super().__init__()
+        super().__init__(ansi_color=True)   # use the terminal's own background and palette
         self.register_theme(FORGE_BLACK)
         self.theme = "forge-black"
         self.c = ForgeClient()
@@ -820,6 +821,18 @@ class ForgeTUI(App):
     async def _decide(self, approve: bool) -> None:
         if self.query_one(TabbedContent).active == "approvals" and self.sel["approval"]:
             await self._decide_id(self.sel["approval"], approve)
+
+    async def action_ctrl_c(self) -> None:
+        """Like a terminal: copy a selection, else stop the running turn, else remind how to quit."""
+        picked = self.screen.get_selected_text()
+        if picked:
+            self.copy_to_clipboard(picked)
+            self.screen.clear_selection()
+            self.notify(f"Copied {len(picked)} characters", timeout=2)
+        elif self.busy:
+            await self.action_interrupt()
+        else:
+            self.notify("Ctrl+Q to quit", timeout=2)
 
     async def action_approve(self) -> None:
         await self._decide(True)

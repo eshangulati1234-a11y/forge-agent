@@ -65,6 +65,18 @@ def init():
     typer.echo(f"Forge home: {init_home()}")
 
 
+def _max_loaded_models() -> int:
+    """1 on an 8 GB GPU; 2-3 on a Mac with plenty of unified memory so embedding/vision calls don't evict the main model."""
+    try:
+        from forge.config import load_config
+        from forge.setup.hardware import gpus, recommended_max_loaded
+        g = gpus()
+        usable = max((x.vram_mb for x in g), default=0)
+        return recommended_max_loaded([m.vram_mb for m in load_config().models if m.vram_mb], usable)
+    except Exception:
+        return 1
+
+
 def _ensure_ollama() -> None:
     import httpx
     try:
@@ -75,8 +87,8 @@ def _ensure_ollama() -> None:
     from forge.setup.hardware import ollama_path
     exe = Path(ollama_path() or "")
     if exe.is_file():
-        env = {**os.environ, "OLLAMA_MAX_LOADED_MODELS": "1", "OLLAMA_NUM_PARALLEL": "1", "OLLAMA_FLASH_ATTENTION": "1",
-               "OLLAMA_KV_CACHE_TYPE": "q8_0", "OLLAMA_HOST": "127.0.0.1:11434"}
+        env = {**os.environ, "OLLAMA_MAX_LOADED_MODELS": str(_max_loaded_models()), "OLLAMA_NUM_PARALLEL": "1",
+               "OLLAMA_FLASH_ATTENTION": "1", "OLLAMA_KV_CACHE_TYPE": "q8_0", "OLLAMA_HOST": "127.0.0.1:11434"}
         extra = {"creationflags": 0x08000000 | 0x00000008} if sys.platform == "win32" else {"start_new_session": True}
         subprocess.Popen([str(exe), "serve"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **extra)
         for _ in range(60):          # wait for the API instead of a fixed sleep (cold starts can take a while)

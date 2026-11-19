@@ -40,7 +40,11 @@ SNAPSHOT_JS = r"""
     if (!visible || el.disabled) continue;
     if (!el.dataset.forgeId) el.dataset.forgeId = 'e' + (window.__forgeSeq = (window.__forgeSeq || 0) + 1);
     const lbl = el.labels && el.labels.length ? el.labels[0].innerText : '';
-    const name = (el.getAttribute('aria-label') || lbl || el.innerText || el.value || el.placeholder || el.title || el.name || el.alt || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+    let name = (el.getAttribute('aria-label') || lbl || el.innerText || el.value || el.placeholder || el.title || el.name || el.alt || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+    const ph = (el.placeholder || '').trim();
+    if (ph && !name.toLowerCase().includes(ph.toLowerCase())) name = (name + ' (' + ph + ')').slice(0, 140);   // "What (Enter keywords)"
+    const roForm = !!(el.form && (el.form.getAttribute('method') || 'get').toLowerCase() === 'get' &&
+                      !el.form.querySelector('input[type=password],input[type=file],textarea'));
     const tag = el.tagName.toLowerCase();
     const type = (el.getAttribute('type') || '').toLowerCase();
     const role = el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'select' ? 'combobox' : tag === 'textarea' ? 'textbox'
@@ -48,7 +52,7 @@ SNAPSHOT_JS = r"""
     out.push({id: el.dataset.forgeId, role, tag, type, name, href: el.href || null,
               value: (tag === 'input' || tag === 'textarea' || tag === 'select') ? (type === 'password' ? '***' : String(el.value || '').slice(0, 200)) : null,
               checked: (type === 'checkbox' || type === 'radio') ? el.checked : null,
-              in_form: !!el.form, required: !!el.required,
+              in_form: !!el.form, readonly_form: roForm, required: !!el.required,
               options: tag === 'select' ? Array.from(el.options).slice(0, 30).map(o => o.text.trim()) : null});
     if (++n >= maxItems) break;
   }
@@ -96,6 +100,17 @@ SCROLL_JS = r"""
   }
 }
 """
+# Total scrollable height of the window plus every inner pane: grows while a lazy list keeps loading.
+PAGE_HEIGHT_JS = r"""
+() => {
+  let h = document.body ? document.body.scrollHeight : 0;
+  for (const e of document.querySelectorAll('*')) {
+    const s = getComputedStyle(e);
+    if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && e.scrollHeight > e.clientHeight + 50) h += e.scrollHeight;
+  }
+  return h;
+}
+"""
 SCROLL_TOP_JS = r"""
 () => {
   window.scrollTo(0, 0);
@@ -134,6 +149,21 @@ CHALLENGE_RE = re.compile(r"verify (that )?you are (a )?human|are you a robot|un
 CHALLENGE_FRAMES = ("recaptcha", "hcaptcha", "challenges.cloudflare.com", "turnstile", "arkoselabs", "funcaptcha")
 VIEWPORT = {"width": 1366, "height": 900}
 RISKY = re.compile(r"\b(submit|apply( now)?|send|purchase|buy|pay|place order|checkout|confirm|publish|post|delete|remove|connect|follow)\b", re.I)
+# Words that make a control a state-changing action no matter what else its label says.
+DANGEROUS = re.compile(r"\b(apply( now)?|send|purchase|buy|pay|place order|checkout|confirm|publish|post|delete|remove|connect|follow|sign ?up|register|subscribe)\b", re.I)
+# A control that only runs a query ("Search", "Submit search", "Find jobs", "Filter results") changes nothing.
+SEARCHY = re.compile(r"\b(search|find|filter|look ?up|go|browse)\b", re.I)
+
+
+def is_risky_control(name: str | None, typ: str | None, readonly_form: bool = False) -> bool:
+    """True for submit/send/purchase style controls that must go through browser.submit (approval).
+    readonly_form: the control sits in a plain GET form with no password/file/textarea field, which can only run a query."""
+    name = name or ""
+    if DANGEROUS.search(name):
+        return True
+    if SEARCHY.search(name) or (typ == "submit" and readonly_form and not RISKY.search(name)):
+        return False                      # "Search", "Submit search", or any button of a GET search form
+    return bool(RISKY.search(name)) or typ == "submit"
 
 
 class BrowserManager:
@@ -394,7 +424,7 @@ class BrowserManager:
         except Exception:
             text = ""
         for e in els:
-            e["risky"] = bool(RISKY.search(e["name"] or "")) or (e["type"] == "submit")
+            e["risky"] = is_risky_control(e["name"], e["type"], bool(e.get("readonly_form")))
         pages = [x for x in page.context.pages if not x.is_closed()]
         return {"url": page.url, "title": await page.title(), "elements": els, "text": re.sub(r"\n\s*\n+", "\n", text)[:text_chars],
                 "dialogs": self.dialogs[-5:], "tabs": len(pages), "tab": pages.index(page) if page in pages else 0,
@@ -421,9 +451,16 @@ class BrowserManager:
                 waited_for = False
         await self._settle(page, max_s=min(5.0, wait_s))
         if scroll:
+            stale = 0
+            last_h = await page.evaluate(PAGE_HEIGHT_JS)
             for _ in range(6):   # lazy lists (LinkedIn's results pane) load ~7 items per scroll
                 await page.evaluate(SCROLL_JS)
-                await asyncio.sleep(0.6)
+                await asyncio.sleep(0.35)
+                h = await page.evaluate(PAGE_HEIGHT_JS)
+                stale = stale + 1 if h == last_h else 0
+                if stale >= 2:       # nothing new loaded twice in a row: the list is exhausted
+                    break
+                last_h = h
         r = await page.evaluate(READ_JS, [selector, links])
         text = re.sub(r"\n\s*\n+", "\n", r["text"] or "").strip()
         out = {"url": page.url, "title": await page.title(), "text": text[:max_chars], "truncated": len(text) > max_chars,
@@ -475,7 +512,9 @@ class BrowserManager:
             raise InterfaceChanged(f"element {element_id} is gone (page changed); take a new snapshot")
         name = (await loc.first.evaluate("e => (e.getAttribute('aria-label') || e.innerText || e.value || '').trim()"))[:120]
         typ = (await loc.first.get_attribute("type") or "").lower()
-        if action == "click" and not allow_risky and (RISKY.search(name) or typ == "submit"):
+        readonly = bool(await loc.first.evaluate("e => !!(e.form && (e.form.getAttribute('method') || 'get').toLowerCase() === 'get' && "
+                                                 "!e.form.querySelector('input[type=password],input[type=file],textarea'))"))
+        if action == "click" and not allow_risky and is_risky_control(name, typ, readonly):
             raise PermissionDenied(f"'{name}' looks like a submit/send/purchase control; use browser.submit (requires approval)")
         before = page.url
         if action not in {"click", "fill", "select", "check", "uncheck", "upload"}:

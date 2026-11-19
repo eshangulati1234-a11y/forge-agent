@@ -80,3 +80,12 @@ class Gate(BaseModel):
 def gate(a, ctx):
     from forge.errors import ChallengeRequired
     raise ChallengeRequired("https://example.test shows a CAPTCHA", kind=a.kind, profile="p", url="https://example.test")
+
+
+class Desk(BaseModel):
+    pass
+
+
+@tool("test.desk", Desk, description="stands in for a desktop action", caps={"desktop"})
+def desk(a, ctx):
+    return {"clicked": True}

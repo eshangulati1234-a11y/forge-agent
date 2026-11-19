@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from forge.models.laya import options_from_labels
+from forge.models.laya import lexical_prerank, options_from_labels
+
+LLM_MAX_OPTIONS = 50   # a 140-element page was a 2.3k-token prompt (~1 s per call even warm)
 from forge.workflows.template import render
 
 
@@ -43,6 +45,9 @@ class Decisions:
                 self._emit("choice", out)
                 return out
             out.update(laya_choice=d.label, laya_confidence=round(d.top_p, 4))
+        if len(options) > LLM_MAX_OPTIONS:
+            none = {k: v for k, v in options.items() if k == "none"}     # an explicit "refuse" option must survive trimming
+            options = {**lexical_prerank(goal or question, options, LLM_MAX_OPTIONS), **none}
         labels = list(options)
         schema = {"type": "object", "properties": {"choice": {"type": "string", "enum": labels}, "reason": {"type": "string"}},
                   "required": ["choice", "reason"]}

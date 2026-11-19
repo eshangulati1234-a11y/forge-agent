@@ -73,6 +73,7 @@ class ModelRouter:
         self.nodes = {n.name: NodeState(n, asyncio.Semaphore(n.max_parallel)) for n in cfg.nodes}
         self.models = cfg.models
         self.pinned: dict[str, str] = dict(cfg.routing.pins)   # capability -> model id (settings: routing.pins)
+        self.single: str = cfg.routing.single_model
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(300, connect=5))
         self.last_call: dict = {}
 
@@ -81,6 +82,7 @@ class ModelRouter:
         self.cfg = cfg
         self.models = cfg.models
         self.pinned = dict(cfg.routing.pins)
+        self.single = cfg.routing.single_model
 
     # ---- health -----------------------------------------------------------------
     async def refresh(self) -> None:
@@ -129,6 +131,12 @@ class ModelRouter:
     # ---- selection ----------------------------------------------------------------
     def candidates(self, capability: str, need_ctx: int = 0, complexity: str = "normal") -> list[ModelConfig]:
         ms = [m for m in self.models if capability in m.capabilities and m.node in self.nodes]
+        if self.single and capability not in self.pinned:
+            one = next((m for m in self.models if m.id == self.single and m.node in self.nodes), None)
+            # Text work all goes to the one model so Ollama never swaps; embeddings are a different kind of model, and
+            # vision only follows if the single model can see.
+            if one and capability != "embedding" and (capability != "vision" or "vision" in one.capabilities):
+                return [one] + [m for m in ms if m is not one]
         if capability in self.pinned:
             ms.sort(key=lambda m: m.id != self.pinned[capability])
             return ms
@@ -312,6 +320,30 @@ class ModelRouter:
             except (httpx.TransportError, httpx.HTTPStatusError) as e:
                 self._fail(n, e)
         raise TransientError("no embedding model available")
+
+    async def warm(self) -> dict[str, float]:
+        """Load the main reasoning model and the embedding model into memory before the first user request, using the same
+        context size the real calls use (a different num_ctx makes Ollama reload the model). Returns {model: seconds}."""
+        timings: dict[str, float] = {}
+        for cap in ("tool_calling", "embedding"):
+            for m in self.candidates(cap)[:1]:
+                n = self.nodes[m.node]
+                if n.cfg.kind != "ollama" or not n.available() or m.id in timings:
+                    continue
+                t = time.time()
+                try:
+                    if cap == "embedding":
+                        r = await self.client.post(f"{n.cfg.url}/api/embed", json={"model": m.id, "input": ["warm up"], "keep_alive": "30m",
+                                                                                 "options": {"num_ctx": m.ctx}}, timeout=120)
+                    else:
+                        r = await self.client.post(f"{n.cfg.url}/api/generate", json={"model": m.id, "keep_alive": "30m",
+                                                                                    "options": {"num_ctx": m.ctx}}, timeout=120)
+                    r.raise_for_status()
+                    n.loaded.add(m.id)
+                    timings[m.id] = round(time.time() - t, 2)
+                except httpx.HTTPError as e:
+                    log.warning("warm-up of %s failed: %s", m.id, e)
+        return timings
 
     async def aclose(self) -> None:
         await self.client.aclose()

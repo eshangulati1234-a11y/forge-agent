@@ -64,6 +64,11 @@ class ToolsConfig(BaseModel):
 
 class RoutingConfig(BaseModel):
     pins: dict[str, str] = Field(default_factory=dict, description="capability -> model id override")
+    single_model: str = Field("", description="one model id for every text task (no swapping models in memory); embeddings and vision keep their own")
+
+
+class SearchConfig(BaseModel):
+    searxng_url: str = Field("", description="base URL of a SearXNG instance for web.search, e.g. http://127.0.0.1:8888")
 
 
 class TuiConfig(BaseModel):
@@ -94,6 +99,7 @@ class ForgeConfig(BaseModel):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     tui: TuiConfig = Field(default_factory=TuiConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
     workspace: str = ""           # default writable dir for chat/session tools
