@@ -490,7 +490,7 @@ class BrowserManager:
         page = await self._require(profile)
         return page, page.locator(f"[data-forge-id='{element_id}']")
 
-    async def _visualize(self, profile: str | None, loc, *, click: bool = False) -> None:
+    async def _visualize(self, profile: str | None, loc, *, click: bool = False, pause: bool = True) -> None:
         """Best-effort decoration; execution and actionability stay with Playwright locators."""
         if self._headless.get(self.resolve(profile), self.headless):
             return
@@ -504,7 +504,17 @@ class BrowserManager:
                                        {"click": click, "delay": self.action_delay_ms}, timeout=1500)
             except Exception:
                 log.debug("Could not visualize browser action", exc_info=True)
-        await asyncio.sleep(self.action_delay_ms / 1000)
+        if pause:
+            await asyncio.sleep(self.action_delay_ms / 1000)
+
+    async def point(self, profile: str | None, element_id: str) -> None:
+        """Move the on-page pointer to an element without touching it, so the user sees what Forge is looking at."""
+        try:
+            _, loc = await self._loc(profile, element_id)
+            if await loc.count():
+                await self._visualize(profile, loc.first, click=False, pause=False)
+        except Exception:
+            log.debug("Could not point at %s", element_id, exc_info=True)
 
     async def act(self, profile: str, element_id: str, action: str, value: str | None = None, *, allow_risky: bool = False) -> dict:
         page, loc = await self._loc(profile, element_id)

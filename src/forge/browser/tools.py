@@ -170,6 +170,7 @@ async def find(a: Find, ctx: ToolContext):
     # whichever link was least wrong, as found=True, and the model kept rephrasing.
     quick = fast_match(els, a.description)
     if quick is not None:
+        await mgr(ctx).point(a.profile, quick["id"])
         return {"found": True, "element": quick, "system": 0, "confidence": 1.0}
     none = {"none": "none of these elements matches"}
     options = {e["id"]: f"{e['role']} '{e['name']}'" for e in els if e["name"]} | none
@@ -180,6 +181,7 @@ async def find(a: Find, ctx: ToolContext):
     el = next((e for e in els if e["id"] == d["choice"]), None)
     if el is None:
         return {"found": False, "hint": FIND_HINT, "system": d["system"]}
+    await mgr(ctx).point(a.profile, el["id"])
     return {"found": True, "element": el, "system": d["system"], "confidence": d.get("confidence")}
 
 
