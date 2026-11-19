@@ -112,20 +112,6 @@ def ollama_models(url: str = "http://127.0.0.1:11434") -> set[str] | None:
         return None
 
 
-def recommended_max_loaded(model_vram_mb: list[int], usable_mb: int, cap: int = 3) -> int:
-    """How many models Ollama may keep resident at once. 1 on small GPUs (loading a second evicts the first anyway);
-    more on large-memory machines, so an embedding or vision call no longer evicts the main model and forces a reload.
-    Counts the largest-first prefix of the configured models that fits in ~75% of usable memory (the rest is KV cache)."""
-    budget = usable_mb * 0.75
-    total, n = 0, 0
-    for v in sorted(model_vram_mb, reverse=True)[:cap]:
-        total += v
-        if total > budget:
-            break
-        n += 1
-    return max(1, n)
-
-
 def session_id() -> int | None:
     if sys.platform != "win32":
         return None

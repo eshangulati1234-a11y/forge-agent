@@ -5,7 +5,6 @@ import pytest
 from forge.browser.agent import is_risky_control
 from forge.browser.tools import fast_match
 from forge.runtime.decisions import LLM_MAX_OPTIONS, Decisions
-from forge.setup.hardware import recommended_max_loaded
 
 
 @pytest.mark.parametrize("name,typ,risky", [
@@ -32,13 +31,6 @@ def test_fast_match_answers_unambiguous_requests_and_never_guesses():
     assert fast_match(ELS, "the box") is None                        # no content words
 
 
-def test_ollama_residency_scales_with_memory():
-    models = [6400, 3200, 6200, 700]
-    assert recommended_max_loaded(models, 8192) == 1                 # 8 GB NVIDIA: one model at a time
-    assert recommended_max_loaded(models, 21626) == 3                # 32 GB Mac: main + vision + a small one stay loaded
-    assert recommended_max_loaded([], 0) == 1
-
-
 async def test_llm_fallback_prompt_is_capped_and_keeps_the_refusal_option(services):
     seen = {}
 
@@ -60,7 +52,7 @@ def test_read_only_get_form_buttons_are_not_risky_but_post_forms_stay_gated():
     assert is_risky_control("Send", "submit", readonly_form=True) is True
 
 
-async def test_router_warm_loads_main_and_embedding_models_with_the_real_context_size(services):
+async def test_router_warm_loads_only_the_main_model_with_the_real_context_size(services):
     import httpx
 
     from forge.config import ModelConfig, NodeConfig
@@ -78,10 +70,10 @@ async def test_router_warm_loads_main_and_embedding_models_with_the_real_context
     r.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     r.nodes["local"].healthy = True
     timings = await r.warm()
-    assert set(timings) == {"main", "emb"}
+    assert set(timings) == {"main"}
     by_path = dict(calls)
     assert by_path["/api/generate"]["options"]["num_ctx"] == 16384 and by_path["/api/generate"]["keep_alive"] == "30m"
-    assert by_path["/api/embed"]["options"]["num_ctx"] == 8192
+    assert "/api/embed" not in by_path
 
 
 def test_single_model_routes_all_text_work_to_one_model_but_not_embeddings():

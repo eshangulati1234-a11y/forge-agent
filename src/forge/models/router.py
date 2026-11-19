@@ -74,6 +74,8 @@ class ModelRouter:
         self.models = cfg.models
         self.pinned: dict[str, str] = dict(cfg.routing.pins)   # capability -> model id (settings: routing.pins)
         self.single: str = cfg.routing.single_model
+        if self.single and not any(m.id == self.single for m in self.models):
+            log.warning("routing.single_model %r is not in [[models]]; add it there or it is ignored", self.single)
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(300, connect=5))
         self.last_call: dict = {}
 
@@ -322,10 +324,10 @@ class ModelRouter:
         raise TransientError("no embedding model available")
 
     async def warm(self) -> dict[str, float]:
-        """Load the main reasoning model and the embedding model into memory before the first user request, using the same
+        """Load the main model into memory before the first user request, using the same
         context size the real calls use (a different num_ctx makes Ollama reload the model). Returns {model: seconds}."""
         timings: dict[str, float] = {}
-        for cap in ("tool_calling", "embedding"):
+        for cap in ("tool_calling",):   # one model at a time: warming the embedder would evict the chat model
             for m in self.candidates(cap)[:1]:
                 n = self.nodes[m.node]
                 if n.cfg.kind != "ollama" or not n.available() or m.id in timings:
